@@ -162,63 +162,13 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
 <div id="modal-container"></div>
 
 <script>
-// ═══════════════════════════════════════════
-// SERVICE WORKER — INLINE (no external sw.js needed)
-// ═══════════════════════════════════════════
-const SW_CODE = `
-const CACHE='contaflow-v5';
-const ASSETS=['/'];
-self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>console.log('SW v5 ready')));});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
-self.addEventListener('message',e=>{if(e.data?.type==='SKIP_WAITING')self.skipWaiting();});
-self.addEventListener('fetch',e=>{
-  if(e.request.url.includes('api.mercury.com')||e.request.url.includes('api.anthropic.com')||e.request.url.includes('fonts.googleapis.com')||e.request.url.includes('fonts.gstatic.com'))return;
-  e.respondWith(caches.match(e.request).then(cached=>{
-    if(cached)return cached;
-    return fetch(e.request).then(res=>{
-      if(!res||res.status!==200||res.type!=='basic')return res;
-      const clone=res.clone();
-      caches.open(CACHE).then(c=>c.put(e.request,clone));
-      return res;
-    }).catch(()=>caches.match('/'));
-  }));
-});
-`;
-
-// Register inline SW
-let swReg = null;
+// Unregister any old service workers to prevent caching issues
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', async () => {
-    try {
-      const blob = new Blob([SW_CODE], {type: 'application/javascript'});
-      const swUrl = URL.createObjectURL(blob);
-      // Use named SW file for better PWA support
-      const reg = await navigator.serviceWorker.register('/sw-cf.js').catch(async () => {
-        // Fallback: register from blob
-        return navigator.serviceWorker.register(swUrl);
-      });
-      swReg = reg;
-      reg.addEventListener('updatefound', () => {
-        const nw = reg.installing;
-        nw.addEventListener('statechange', () => {
-          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-            document.getElementById('update-bar').classList.add('show');
-          }
-        });
-      });
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!refreshing) { refreshing = true; window.location.reload(); }
-      });
-      if (reg.waiting) document.getElementById('update-bar').classList.add('show');
-    } catch(e) { console.warn('SW:', e); }
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(reg => reg.unregister());
   });
 }
-
-function applyUpdate() {
-  if (swReg?.waiting) swReg.waiting.postMessage({type: 'SKIP_WAITING'});
-  else window.location.reload();
-}
+function applyUpdate(){ window.location.reload(); }
 
 // PWA install
 let deferredInstall;
