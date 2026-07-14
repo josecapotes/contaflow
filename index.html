@@ -271,6 +271,7 @@ const TABS=[
   {id:"cashflow",icon:"💧",label:"Flujo de Caja",s:"plan"},
   {id:"taxes",icon:"🧾",label:"Impuestos",s:"plan"},
   {id:"txns",icon:"💳",label:"Transacciones",s:"datos"},
+  {id:"reconcile",icon:"🔗",label:"Conciliación",s:"datos"},
   {id:"transfers",icon:"🔄",label:"Transferencias",s:"datos"},
   {id:"accounts",icon:"🏦",label:"Cuentas",s:"datos"},
   {id:"coa",icon:"📋",label:"Plan Cuentas",s:"datos"},
@@ -547,7 +548,7 @@ function renderTxns(){
   const lc=S.coa.filter(c=>c.group!=="header");
   const filtered=S.txns.filter(t=>{const q=S.filterSearch.toLowerCase();if(q&&!`${t.description} ${t.counterparty}`.toLowerCase().includes(q))return false;if(S.filterCode&&t.coaCode!==S.filterCode)return false;if(S.filterSign==="income"&&t.amount<=0)return false;if(S.filterSign==="expense"&&t.amount>=0)return false;return true;}).sort((a,b)=>b.date.localeCompare(a.date));
   return`<div class="card card-sm" style="margin-bottom:14px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input id="tx-search" style="width:200px" placeholder="🔍 Buscar..." value="${escHtml(S.filterSearch)}" oninput="S.filterSearch=this.value;renderContent()"><select style="max-width:220px" onchange="S.filterCode=this.value;renderContent()"><option value="">Todas las categorías</option>${lc.map(c=>`<option value="${c.code}" ${c.code===S.filterCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("")}</select><select onchange="S.filterSign=this.value;renderContent()"><option value="" ${!S.filterSign?"selected":""}>Todos</option><option value="income" ${S.filterSign==="income"?"selected":""}>Ingresos</option><option value="expense" ${S.filterSign==="expense"?"selected":""}>Gastos</option></select><div style="flex:1"></div><button class="btn btn-purple btn-sm" onclick="aiCategorizeTxns()">🤖 Categorizar IA</button><button class="btn btn-ghost btn-sm" onclick="autoAll()">⚡ Auto</button><button class="btn btn-primary btn-sm" onclick="showModal('add-tx')">+ Manual</button></div></div>
-  <div class="card card-sm"><div style="font-size:11px;color:var(--muted);margin-bottom:10px">${filtered.length} transacciones · <span id="ai-cat-status"></span></div><div style="overflow-x:auto"><table><thead><tr><th>Fecha</th><th>Descripción</th><th>Contraparte</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead><tbody>${filtered.map(t=>{const opts=lc.map(c=>`<option value="${c.code}" ${c.code===t.coaCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("");return`<tr><td style="color:var(--muted);white-space:nowrap;font-size:11px">${fmtDateFull(t.date)}</td><td style="max-width:200px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</div>${t.note?`<div style="font-size:10px;color:var(--muted)">${escHtml(t.note)}</div>`:""}${t.isManual?'<span class="tag tag-gold">Manual</span>':""}${t.aiCategorized?'<span class="tag tag-purple">IA</span>':""}${t.kind==="transfer"?'<span class="tag" style="background:#3b82f622;color:#3b82f6">🔄 Transferencia</span>':""}</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${escHtml(t.counterparty)}</td><td><select style="font-size:11px;max-width:200px" onchange="updateTxCoa('${t.id}',this.value)"><option value="">Sin categoría</option>${opts}</select></td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600;white-space:nowrap">${fmt(t.amount)}</td><td>${t.isManual?`<button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">✕</button>`:""}</td></tr>`;}).join("")}${filtered.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Sin resultados</td></tr>`:""}</tbody></table></div></div>`;
+  <div class="card card-sm"><div style="font-size:11px;color:var(--muted);margin-bottom:10px">${filtered.length} transacciones · <span id="ai-cat-status"></span></div><div style="overflow-x:auto"><table><thead><tr><th>Fecha</th><th>Descripción</th><th>Contraparte</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead><tbody>${filtered.map(t=>{const opts=lc.map(c=>`<option value="${c.code}" ${c.code===t.coaCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("");return`<tr><td style="color:var(--muted);white-space:nowrap;font-size:11px">${fmtDateFull(t.date)}</td><td style="max-width:200px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</div>${t.note?`<div style="font-size:10px;color:var(--muted)">${escHtml(t.note)}</div>`:""}${t.isManual?'<span class="tag tag-gold">Manual</span>':""}${t.aiCategorized?'<span class="tag tag-purple">IA</span>':""}${t.kind==="transfer"?'<span class="tag" style="background:#3b82f622;color:#3b82f6">🔄 Transferencia</span>':""}${t.reconciled?'<span class="tag" style="background:#10b98122;color:#10b981">✓ Conciliada</span>':""}</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${escHtml(t.counterparty)}</td><td><select style="font-size:11px;max-width:200px" onchange="updateTxCoa('${t.id}',this.value)"><option value="">Sin categoría</option>${opts}</select></td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600;white-space:nowrap">${fmt(t.amount)}</td><td>${t.isManual?`<button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">✕</button>`:""}</td></tr>`;}).join("")}${filtered.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Sin resultados</td></tr>`:""}</tbody></table></div></div>`;
 }
 async function updateTxCoa(id,code){S.txns=S.txns.map(t=>t.id===id?{...t,coaCode:code}:t);await saveTxns();updateSidebar();}
 async function autoAll(){S.txns=S.txns.map(t=>t.kind==="transfer"?t:{...t,coaCode:autoCategory(t)});await saveTxns();renderContent();toast("✅ Auto-categorización completa")}
@@ -564,6 +565,85 @@ async function aiCategorizeTxns(){
     let cnt=0;S.txns=S.txns.map(t=>{const m=results.find(r=>r.id===t.id);if(m?.code){cnt++;return{...t,coaCode:m.code,aiCategorized:true}}return t;});
     await saveTxns();renderContent();updateSidebar();toast(`✅ IA categorizó ${cnt} transacciones`);
   }catch(e){toast("❌ "+e.message);if(st)st.textContent="";}
+}
+
+// ═══ CONCILIACIÓN BANCARIA ═══
+let RECON={rows:[],matched:[],missing:[],unbacked:[],analyzed:false,accountId:""};
+function parseCSVLine(line){
+  const out=[];let cur="",inQ=false;
+  for(let i=0;i<line.length;i++){const ch=line[i];
+    if(inQ){if(ch==='"'){if(line[i+1]==='"'){cur+='"';i++}else inQ=false}else cur+=ch}
+    else{if(ch==='"')inQ=true;else if(ch===","){out.push(cur);cur=""}else cur+=ch}}
+  out.push(cur);return out;
+}
+function detectAccount(srcAcct){
+  const s=(srcAcct||"").toLowerCase();
+  if(s.includes("3721"))return"m3721";
+  if(s.includes("5416"))return"m5416";
+  if(s.includes("5446"))return"m5446";
+  if(s.includes("credit"))return"mcredit";
+  return"";
+}
+function isInternalXfer(bd){
+  const s=(bd||"").toLowerCase();
+  return["io autopay","mercury initiated payment","percentage-based rule","transfer between your mercury accounts","backup to primary"].some(x=>s.includes(x));
+}
+function parseBankData(text){
+  text=text.trim();
+  // JSON array?
+  if(text.startsWith("[")){try{const arr=JSON.parse(text);return arr.map(t=>({date:(t.date||"").slice(0,10),description:t.description||"",amount:parseFloat(t.amount)||0,accountId:t.accountId||"",kind:t.kind||"",status:"Sent",bankDesc:t.note||""}));}catch(e){return null}}
+  // CSV Mercury
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length)return null;
+  const hdr=parseCSVLine(lines[0]).map(h=>h.trim());
+  const iDate=hdr.indexOf("Date (UTC)"),iDesc=hdr.indexOf("Description"),iAmt=hdr.indexOf("Amount"),iStat=hdr.indexOf("Status"),iSrc=hdr.indexOf("Source Account"),iBD=hdr.indexOf("Bank Description");
+  if(iDate<0||iAmt<0)return null;
+  return lines.slice(1).map(l=>{
+    const c=parseCSVLine(l);
+    const raw=c[iDate]||"";const m=raw.match(/^(\d{2})-(\d{2})-(\d{4})/);
+    const date=m?`${m[3]}-${m[1]}-${m[2]}`:raw.slice(0,10);
+    const bd=iBD>=0?c[iBD]:"";
+    return{date,description:c[iDesc]||"",amount:parseFloat(c[iAmt])||0,accountId:detectAccount(iSrc>=0?c[iSrc]:""),kind:isInternalXfer(bd)?"transfer":"",status:iStat>=0?c[iStat]:"Sent",bankDesc:bd};
+  }).filter(r=>r.status==="Sent");
+}
+function daysDiff(a,b){return Math.abs((new Date(a+"T00:00:00")-new Date(b+"T00:00:00"))/86400000)}
+function runReconcile(){
+  const text=document.getElementById("recon-input").value;
+  const rows=parseBankData(text);
+  if(!rows){toast("❌ No pude leer los datos. Pega el CSV de Mercury o un array JSON.");return;}
+  const minD=rows.reduce((m,r)=>r.date<m?r.date:m,"9999-12-31");
+  const maxD=rows.reduce((m,r)=>r.date>m?r.date:m,"0000-01-01");
+  const usedBook=new Set();
+  const matched=[],missing=[];
+  rows.forEach(r=>{
+    const cand=S.txns.filter(t=>!usedBook.has(t.id)&&Math.abs(t.amount-r.amount)<0.005&&daysDiff(t.date,r.date)<=3&&(!r.accountId||!t.accountId||t.accountId===r.accountId));
+    if(cand.length){cand.sort((a,b)=>daysDiff(a.date,r.date)-daysDiff(b.date,r.date));usedBook.add(cand[0].id);matched.push({bank:r,book:cand[0]});}
+    else missing.push(r);
+  });
+  const unbacked=S.txns.filter(t=>!usedBook.has(t.id)&&t.date>=minD&&t.date<=maxD&&(!RECON.accountId||t.accountId===RECON.accountId)&&!t.reconciled);
+  RECON={...RECON,rows,matched,missing,unbacked,analyzed:true};
+  renderContent();
+}
+async function reconMarkMatched(){
+  const ids=new Set(RECON.matched.map(m=>m.book.id));
+  S.txns=S.txns.map(t=>ids.has(t.id)?{...t,reconciled:true}:t);
+  await saveTxns();toast(`✅ ${ids.size} transacciones conciliadas`);RECON.matched=[];renderContent();
+}
+async function reconImportMissing(){
+  const toAdd=RECON.missing.map((r,i)=>({id:`recon_${Date.now()}_${i}`,date:r.date,description:r.description,counterparty:"",amount:r.amount,note:r.bankDesc||"Importado en conciliación",kind:r.kind,accountId:r.accountId,coaCode:r.kind==="transfer"?"":autoCategory({description:r.description,counterparty:"",amount:r.amount}),isManual:false,reconciled:true}));
+  S.txns=[...S.txns,...toAdd];
+  await saveTxns();toast(`✅ ${toAdd.length} transacciones importadas y conciliadas`);RECON.missing=[];updateSidebar();renderContent();
+}
+function renderReconcile(){
+  const acctOpts=`<option value="">Todas las cuentas</option>`+S.bankAccounts.map(a=>`<option value="${a.id}" ${RECON.accountId===a.id?"selected":""}>${escHtml(a.name)}</option>`).join("");
+  const summary=RECON.analyzed?`<div class="grid" style="margin-bottom:16px"><div class="card kpi"><div class="kpi-label">✅ Coinciden</div><div class="kpi-val" style="color:#10b981">${RECON.matched.length}</div><div class="kpi-sub">libro = banco</div></div><div class="card kpi"><div class="kpi-label">⚠️ Faltan en tu libro</div><div class="kpi-val" style="color:#f59e0b">${RECON.missing.length}</div><div class="kpi-sub">están en el banco</div></div><div class="card kpi"><div class="kpi-label">❓ Sin respaldo bancario</div><div class="kpi-val" style="color:#ef4444">${RECON.unbacked.length}</div><div class="kpi-sub">solo en tu libro</div></div></div>`:"";
+  const matchedTable=RECON.analyzed&&RECON.matched.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(16,185,129,.3)"><div class="section-title" style="color:#10b981">✅ Coincidencias (${RECON.matched.length}) <button class="btn btn-primary btn-sm" style="float:right" onclick="reconMarkMatched()">Marcar todas como conciliadas</button></div><div style="overflow-x:auto"><table style="font-size:11px"><thead><tr><th>Fecha banco</th><th>Descripción banco</th><th>↔ En tu libro</th><th style="text-align:right">Monto</th></tr></thead><tbody>${RECON.matched.map(m=>`<tr><td style="white-space:nowrap;color:var(--muted)">${m.bank.date}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(m.bank.description)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${escHtml(m.book.description)} (${m.book.date})</td><td style="text-align:right;font-weight:600;color:${m.bank.amount>=0?'#10b981':'#ef4444'}">${fmt(m.bank.amount)}</td></tr>`).join("")}</tbody></table></div></div>`:"";
+  const missingTable=RECON.analyzed&&RECON.missing.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.3)"><div class="section-title" style="color:#f59e0b">⚠️ En el banco pero NO en tu libro (${RECON.missing.length}) <button class="btn btn-primary btn-sm" style="float:right" onclick="reconImportMissing()">Importar todas</button></div><div style="overflow-x:auto"><table style="font-size:11px"><thead><tr><th>Fecha</th><th>Descripción</th><th>Tipo</th><th style="text-align:right">Monto</th></tr></thead><tbody>${RECON.missing.map(r=>`<tr><td style="white-space:nowrap;color:var(--muted)">${r.date}</td><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.description)}</td><td>${r.kind==="transfer"?'<span class="tag" style="background:#3b82f622;color:#3b82f6">🔄 Transf.</span>':'<span class="tag tag-muted">Operación</span>'}</td><td style="text-align:right;font-weight:600;color:${r.amount>=0?'#10b981':'#ef4444'}">${fmt(r.amount)}</td></tr>`).join("")}</tbody></table></div></div>`:"";
+  const unbackedTable=RECON.analyzed&&RECON.unbacked.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(239,68,68,.3)"><div class="section-title" style="color:#ef4444">❓ En tu libro pero SIN respaldo bancario (${RECON.unbacked.length})</div><div style="font-size:11px;color:var(--muted);margin-bottom:8px">Revísalas: pueden ser errores de captura, duplicados, o transacciones que aún no llegan al banco (cheques pendientes).</div><div style="overflow-x:auto"><table style="font-size:11px"><thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right">Monto</th><th></th></tr></thead><tbody>${RECON.unbacked.map(t=>`<tr><td style="white-space:nowrap;color:var(--muted)">${t.date}</td><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}${t.isManual?' <span class="tag tag-gold">Manual</span>':""}</td><td style="text-align:right;font-weight:600;color:${t.amount>=0?'#10b981':'#ef4444'}">${fmt(t.amount)}</td><td>${t.isManual?`<button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px">🗑</button>`:""}</td></tr>`).join("")}</tbody></table></div></div>`:"";
+  const okMsg=RECON.analyzed&&!RECON.matched.length&&!RECON.missing.length&&!RECON.unbacked.length?`<div class="card" style="text-align:center;padding:30px;border-color:rgba(16,185,129,.4)"><div style="font-size:28px;margin-bottom:8px">🎉</div><div style="color:#10b981;font-weight:600">Todo conciliado — tu libro coincide con el banco</div></div>`:"";
+  return`<div style="max-width:860px"><div style="font-size:15px;font-weight:600;margin-bottom:4px">Conciliación Bancaria</div><div style="font-size:11px;color:var(--muted);margin-bottom:14px">Pega el CSV exportado de Mercury (o un array JSON) para verificar tu libro contra el banco. Coincidencia por monto exacto ± 3 días de diferencia.</div>
+  <div class="card" style="margin-bottom:16px"><div class="input-row" style="margin-bottom:8px"><div style="flex:1"><label>Filtrar por cuenta (opcional)</label><select style="width:100%" onchange="RECON.accountId=this.value">${acctOpts}</select></div></div><textarea id="recon-input" rows="6" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Date (UTC),Description,Amount,Status,Source Account,..."></textarea><div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-primary" onclick="runReconcile()">🔗 Analizar</button>${RECON.analyzed?`<button class="btn btn-ghost" onclick="RECON={rows:[],matched:[],missing:[],unbacked:[],analyzed:false,accountId:''};renderContent()">Limpiar</button>`:""}</div></div>
+  ${summary}${matchedTable}${missingTable}${unbackedTable}${okMsg}</div>`;
 }
 
 function renderTransfers(){
@@ -683,7 +763,7 @@ async function callClaudeWithSystem(system,messages){
 
 function showModal(type){
   const lc=S.coa.filter(c=>c.group!=="header");let html="";
-  if(type==="add-tx")html=`<div class="modal"><div class="modal-title">Nueva Entrada Manual</div><div class="input-row"><div><label>Fecha *</label><input type="date" id="m-date" value="${new Date().toISOString().slice(0,10)}"></div><div style="flex:1"><label>Descripción *</label><input id="m-desc" style="width:100%"></div></div><div class="input-row"><div><label>Monto</label><input type="number" id="m-amount" step="0.01" placeholder="-97.00"></div><div style="flex:1"><label>Contraparte</label><input id="m-counter" style="width:100%"></div></div><div class="input-row"><div style="flex:1"><label>Categoría</label><select id="m-coa" style="width:100%"><option value="">Auto-detectar</option>${lc.map(c=>`<option value="${c.code}">${c.code} – ${escHtml(c.name)}</option>`).join("")}</select></div><div style="flex:1"><label>Nota</label><input id="m-note" style="width:100%"></div></div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="addManualTx()">Agregar</button></div></div>`;
+  if(type==="add-tx")html=`<div class="modal"><div class="modal-title">Nueva Entrada Manual</div><div class="input-row"><div><label>Fecha *</label><input type="date" id="m-date" value="${new Date().toISOString().slice(0,10)}"></div><div style="flex:1"><label>Descripción *</label><input id="m-desc" style="width:100%"></div></div><div class="input-row"><div><label>Monto *</label><input type="number" id="m-amount" step="0.01" placeholder="-97.00"></div><div style="flex:1"><label>Cuenta Bancaria *</label><select id="m-account" style="width:100%">${S.bankAccounts.map(a=>`<option value="${a.id}">${escHtml(a.name)}</option>`).join("")}</select></div></div><div class="input-row"><div style="flex:1"><label>Contraparte</label><input id="m-counter" style="width:100%"></div><div style="flex:1"><label>Categoría</label><select id="m-coa" style="width:100%"><option value="">Auto-detectar</option>${lc.map(c=>`<option value="${c.code}">${c.code} – ${escHtml(c.name)}</option>`).join("")}</select></div></div><div class="input-row"><div style="flex:1"><label>Nota</label><input id="m-note" style="width:100%"></div></div><div style="font-size:10px;color:var(--muted);margin-top:4px">💡 Gastos en negativo (-97.00), ingresos en positivo. Si pagas con la tarjeta, selecciona "Mercury Credit".</div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="addManualTx()">Agregar</button></div></div>`;
   if(type==="add-balance")html=`<div class="modal"><div class="modal-title">Nueva Entrada Balance</div><div class="input-row"><div style="flex:2"><label>Descripción *</label><input id="b-name" style="width:100%" placeholder="Ej: Propiedad Lehigh Acres"></div><div><label>Tipo</label><select id="b-type"><option value="asset">Activo</option><option value="liability">Pasivo</option></select></div></div><div class="input-row"><div><label>Valor ($)</label><input type="number" id="b-amount" step="100" placeholder="150000"></div><div style="flex:1"><label>Nota</label><input id="b-note" style="width:100%"></div></div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="addBalanceEntry()">Agregar</button></div></div>`;
   if(type==="add-account")html=`<div class="modal"><div class="modal-title">Nueva Cuenta Bancaria</div><div class="input-row"><div style="flex:2"><label>Nombre *</label><input id="a-name" style="width:100%"></div><div style="flex:1"><label>Banco *</label><input id="a-bank" style="width:100%"></div></div><div class="input-row"><div><label>Tipo</label><select id="a-type"><option>checking</option><option>savings</option><option>credit</option><option>investment</option><option>other</option></select></div><div><label>Últimos 4</label><input id="a-last4" style="width:80px"></div><div><label>Color</label><input type="color" id="a-color" value="#10b981" style="width:44px;height:34px;padding:2px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer"></div></div><div class="input-row"><div style="flex:1"><label>Nota</label><input id="a-note" style="width:100%"></div></div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="addAccount()">Guardar</button></div></div>`;
   if(type==="add-coa")html=`<div class="modal"><div class="modal-title">Nueva Cuenta Contable</div><div class="input-row"><div><label>Código *</label><input id="c-code" style="width:90px" placeholder="5210"></div><div style="flex:1"><label>Nombre *</label><input id="c-name" style="width:100%"></div></div><div class="input-row"><div><label>Tipo</label><select id="c-type"><option value="expense">expense</option><option value="revenue">revenue</option><option value="asset">asset</option><option value="liability">liability</option><option value="equity">equity</option></select></div><div><label>Grupo</label><input id="c-group" style="width:120px" value="misc"></div></div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="addCoaEntry()">Agregar</button></div></div>`;
@@ -692,7 +772,7 @@ function showModal(type){
   const bg=document.createElement("div");bg.className="modal-bg";bg.id="active-modal";bg.innerHTML=html;bg.addEventListener("click",e=>{if(e.target===bg)closeModal()});document.getElementById("modal-container").appendChild(bg);
 }
 function closeModal(){const m=document.getElementById("active-modal");if(m)m.remove()}
-async function addManualTx(){const date=document.getElementById("m-date").value,desc=document.getElementById("m-desc").value.trim(),amount=parseFloat(document.getElementById("m-amount").value);if(!date||!desc||isNaN(amount))return toast("⚠️ Completa los campos requeridos");const tx={id:`manual_${Date.now()}`,date,description:desc,amount,counterparty:document.getElementById("m-counter").value,note:document.getElementById("m-note").value,coaCode:document.getElementById("m-coa").value||autoCategory({description:desc,counterparty:"",amount}),kind:"manual",isManual:true};S.txns=[...S.txns,tx];await saveTxns();closeModal();renderContent();updateSidebar();toast("✅ Entrada manual agregada")}
+async function addManualTx(){const date=document.getElementById("m-date").value,desc=document.getElementById("m-desc").value.trim(),amount=parseFloat(document.getElementById("m-amount").value);if(!date||!desc||isNaN(amount))return toast("⚠️ Completa los campos requeridos");const tx={id:`manual_${Date.now()}`,date,description:desc,amount,counterparty:document.getElementById("m-counter").value,note:document.getElementById("m-note").value,coaCode:document.getElementById("m-coa").value||autoCategory({description:desc,counterparty:"",amount}),kind:"manual",accountId:document.getElementById("m-account").value,isManual:true,reconciled:false};S.txns=[...S.txns,tx];await saveTxns();closeModal();renderContent();updateSidebar();toast("✅ Entrada manual agregada")}
 async function addBalanceEntry(){const name=document.getElementById("b-name").value.trim(),amount=parseFloat(document.getElementById("b-amount").value);if(!name||isNaN(amount))return toast("⚠️ Completa los campos requeridos");S.balanceEntries=[...S.balanceEntries,{id:`bal_${Date.now()}`,year:S.year,name,type:document.getElementById("b-type").value,amount,note:document.getElementById("b-note").value}];await saveBalanceEntries();closeModal();renderContent();toast("✅ Entrada de balance agregada")}
 async function addAccount(){const name=document.getElementById("a-name").value.trim(),bank=document.getElementById("a-bank").value.trim();if(!name||!bank)return toast("⚠️ Nombre y banco requeridos");S.bankAccounts=[...S.bankAccounts,{id:`acc_${Date.now()}`,name,bank,type:document.getElementById("a-type").value,last4:document.getElementById("a-last4").value,color:document.getElementById("a-color").value,note:document.getElementById("a-note").value}];await saveBankAccts();closeModal();renderContent();toast("✅ Cuenta agregada")}
 async function addCoaEntry(){const code=document.getElementById("c-code").value.trim(),name=document.getElementById("c-name").value.trim();if(!code||!name)return toast("⚠️ Código y nombre requeridos");if(S.coa.find(c=>c.code===code))return toast("⚠️ Código ya existe");S.coa=[...S.coa,{code,name,type:document.getElementById("c-type").value,group:document.getElementById("c-group").value}].sort((a,b)=>a.code.localeCompare(b.code));await saveCoa();closeModal();renderContent();toast("✅ Cuenta agregada")}
@@ -725,7 +805,7 @@ async function importJSON(){
 
 function renderContent(){
   const el=document.getElementById("content");
-  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,txns:renderTxns,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
+  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,txns:renderTxns,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
   el.innerHTML=(map[S.tab]||renderDashboard)();
 }
 
