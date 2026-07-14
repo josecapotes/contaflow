@@ -204,7 +204,7 @@ document.head.appendChild(manifestLink);
 // ═══════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════
-const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
+const ANTHROPIC_MODEL = "claude-sonnet-4-6";
 const PROXY_URL = "https://contaflow-ai.josecapotes.workers.dev";
 const DEFAULT_COA = [
   {code:"1000",name:"ACTIVOS",type:"asset",group:"header"},
@@ -386,7 +386,7 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
 function updateSidebar(){
   buildYearSelect();buildNav();
   document.getElementById("sidebar-company").textContent=S.settings.companyName?.split(",")[0]||"";
-  const net=S.txns.reduce((s,t)=>s+t.amount,0);
+  const net=S.txns.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
   const el=document.getElementById("sidebar-net");
   el.textContent=fmt(net);el.style.color=net>=0?"#10b981":"#ef4444";
   document.getElementById("sidebar-meta").textContent=`${S.year} · ${S.txns.length} transacciones`;
@@ -462,15 +462,21 @@ function exportPL(){
 function renderBalance(){
   const entries=S.balanceEntries.filter(e=>e.year===S.year);
   const assetE=entries.filter(e=>e.type==="asset"),liabE=entries.filter(e=>e.type==="liability");
-  const tA=assetE.reduce((s,e)=>s+e.amount,0),tL=liabE.reduce((s,e)=>s+e.amount,0);
-  const eq=tA-tL,netInc=S.txns.reduce((s,t)=>s+t.amount,0);
+  // Auto: balances calculados de cuentas bancarias
+  const bankAssets=S.bankAccounts.filter(a=>a.type!=="credit").map(a=>({id:`auto_${a.id}`,name:a.name,amount:computeAccountBalance(a.id),note:"🔄 Calculado automático (transacciones + balance inicial)",auto:true}));
+  const bankLiabs=S.bankAccounts.filter(a=>a.type==="credit").map(a=>({id:`auto_${a.id}`,name:a.name,amount:computeAccountBalance(a.id),note:"🔄 Deuda calculada automática",auto:true})).filter(e=>Math.abs(e.amount)>0.005);
+  const allAssets=[...bankAssets,...assetE],allLiabs=[...bankLiabs,...liabE];
+  const tA=allAssets.reduce((s,e)=>s+e.amount,0),tL=allLiabs.reduce((s,e)=>s+e.amount,0);
+  const netInc=S.txns.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
+  const eq=tA-tL;
+  const row=e=>`<tr><td>${escHtml(e.name)}<br><span style="font-size:10px;color:var(--muted)">${escHtml(e.note||"")}</span></td><td style="text-align:right;font-weight:600">${fmt(e.amount)}</td><td>${e.auto?"":`<button onclick="removeBalanceEntry('${e.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`}</td></tr>`;
   return`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Balance General</div><button class="btn btn-primary btn-sm" onclick="showModal('add-balance')">+ Agregar</button></div>
-  <div class="grid" style="margin-bottom:18px"><div class="card kpi"><div class="kpi-label">Total Activos</div><div class="kpi-val" style="color:#3b82f6">${fmt(tA)}</div></div><div class="card kpi"><div class="kpi-label">Total Pasivos</div><div class="kpi-val" style="color:#8b5cf6">${fmt(tL)}</div></div><div class="card kpi"><div class="kpi-label">Patrimonio</div><div class="kpi-val" style="color:${eq>=0?'#10b981':'#ef4444'}">${fmt(eq)}</div><div class="kpi-sub">+Utilidad: ${fmt(netInc)}</div></div></div>
+  <div class="grid" style="margin-bottom:18px"><div class="card kpi"><div class="kpi-label">Total Activos</div><div class="kpi-val" style="color:#3b82f6">${fmt(tA)}</div><div class="kpi-sub">${bankAssets.length} auto + ${assetE.length} manual</div></div><div class="card kpi"><div class="kpi-label">Total Pasivos</div><div class="kpi-val" style="color:#8b5cf6">${fmt(tL)}</div><div class="kpi-sub">${bankLiabs.length} auto + ${liabE.length} manual</div></div><div class="card kpi"><div class="kpi-label">Patrimonio</div><div class="kpi-val" style="color:${eq>=0?'#10b981':'#ef4444'}">${fmt(eq)}</div><div class="kpi-sub">Utilidad ${S.year}: ${fmt(netInc)}</div></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap">
-  <div class="card" style="flex:1;min-width:240px"><div class="section-title" style="color:#3b82f6">ACTIVOS</div><table><thead><tr><th>Descripción</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${assetE.map(e=>`<tr><td>${escHtml(e.name)}<br><span style="font-size:10px;color:var(--muted)">${escHtml(e.note||"")}</span></td><td style="text-align:right;color:#3b82f6;font-weight:600">${fmt(e.amount)}</td><td><button onclick="removeBalanceEntry('${e.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button></td></tr>`).join("")}${!assetE.length?`<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Sin activos</td></tr>`:""}</tbody></table><div style="border-top:1px solid var(--border);padding:10px;text-align:right;font-family:var(--serif);font-size:14px;font-weight:600;color:#3b82f6">Total: ${fmt(tA)}</div></div>
-  <div class="card" style="flex:1;min-width:240px"><div class="section-title" style="color:#8b5cf6">PASIVOS Y PATRIMONIO</div><table><thead><tr><th>Descripción</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${liabE.map(e=>`<tr><td>${escHtml(e.name)}<br><span style="font-size:10px;color:var(--muted)">${escHtml(e.note||"")}</span></td><td style="text-align:right;color:#8b5cf6;font-weight:600">${fmt(e.amount)}</td><td><button onclick="removeBalanceEntry('${e.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button></td></tr>`).join("")}${!liabE.length?`<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Sin pasivos</td></tr>`:""}</tbody></table>
-  <div style="border-top:2px solid var(--border);padding:10px"><div style="display:flex;justify-content:space-between;font-family:var(--serif);font-size:14px;font-weight:600"><span>Total Pasivos:</span><span style="color:#8b5cf6">${fmt(tL)}</span></div><div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px;color:var(--muted)"><span>Capital:</span><span>${fmt(eq)}</span></div><div style="display:flex;justify-content:space-between;font-size:13px;margin-top:4px;color:var(--muted)"><span>Utilidad ${S.year}:</span><span style="color:${netInc>=0?'#10b981':'#ef4444'}">${fmt(netInc)}</span></div><div style="display:flex;justify-content:space-between;font-size:15px;font-weight:600;margin-top:8px;border-top:1px solid var(--border);padding-top:8px"><span>Total:</span><span style="color:#10b981">${fmt(tL+eq+netInc)}</span></div></div></div></div>
-  <div style="margin-top:12px;font-size:11px;color:var(--muted)">💡 Agrega activos (cuentas, propiedades) y pasivos (préstamos, tarjetas) manualmente. La utilidad neta viene del P&L.</div></div>`;
+  <div class="card" style="flex:1;min-width:240px"><div class="section-title" style="color:#3b82f6">ACTIVOS</div><table><thead><tr><th>Descripción</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${allAssets.map(row).join("")}${!allAssets.length?`<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Sin activos</td></tr>`:""}</tbody></table><div style="border-top:1px solid var(--border);padding:10px;text-align:right;font-family:var(--serif);font-size:14px;font-weight:600;color:#3b82f6">Total: ${fmt(tA)}</div></div>
+  <div class="card" style="flex:1;min-width:240px"><div class="section-title" style="color:#8b5cf6">PASIVOS Y PATRIMONIO</div><table><thead><tr><th>Descripción</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${allLiabs.map(row).join("")}${!allLiabs.length?`<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Sin pasivos</td></tr>`:""}</tbody></table>
+  <div style="border-top:2px solid var(--border);padding:10px"><div style="display:flex;justify-content:space-between;font-family:var(--serif);font-size:14px;font-weight:600"><span>Total Pasivos:</span><span style="color:#8b5cf6">${fmt(tL)}</span></div><div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px;color:var(--muted)"><span>Patrimonio:</span><span>${fmt(eq)}</span></div><div style="display:flex;justify-content:space-between;font-size:15px;font-weight:600;margin-top:8px;border-top:1px solid var(--border);padding-top:8px"><span>Total:</span><span style="color:#10b981">${fmt(tL+eq)}</span></div></div></div></div>
+  <div style="margin-top:12px;font-size:11px;color:var(--muted)">💡 Las cuentas Mercury se calculan automáticamente desde tus transacciones. Agrega manualmente otros activos (propiedades, equipos) y pasivos (préstamos externos).</div></div>`;
 }
 async function removeBalanceEntry(id){S.balanceEntries=S.balanceEntries.filter(e=>e.id!==id);await saveBalanceEntries();renderContent();}
 
@@ -706,9 +712,10 @@ async function sendAiQuestion(msg){
   S.aiMessages.push({role:"user",content:msg});renderContent();
   setTimeout(()=>{const el=document.getElementById("ai-chat-messages");if(el)el.scrollTop=el.scrollHeight},50);
   const btn=document.getElementById("ai-send-btn");if(btn)btn.disabled=true;
-  const rev=S.txns.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
-  const exp=S.txns.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0),net=rev-exp;
-  const topExp={};S.txns.filter(t=>t.amount<0).forEach(t=>{const k=t.coaCode||"5900";topExp[k]=(topExp[k]||0)+Math.abs(t.amount)});
+  const opTxns=S.txns.filter(t=>t.kind!=="transfer");
+  const rev=opTxns.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
+  const exp=opTxns.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0),net=rev-exp;
+  const topExp={};opTxns.filter(t=>t.amount<0).forEach(t=>{const k=t.coaCode||"5900";topExp[k]=(topExp[k]||0)+Math.abs(t.amount)});
   const sys=`Eres el CFO de José Capote para ${S.settings.companyName} (${S.settings.entity}, ${S.settings.state}).\nAño: ${S.year} | Ingresos: ${fmt(rev)} | Gastos: ${fmt(exp)} | Utilidad: ${fmt(net)} | Margen: ${rev>0?((net/rev)*100).toFixed(1):0}%\nTop gastos: ${Object.entries(topExp).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([c,v])=>`${catName(c)}: ${fmt(v)}`).join(", ")}\nProyectos: Catedral, Genova eCommerce, Marketing GHL, Bienes Raíces FL.\nFlorida LLC Pass-Through. Responde en español, directo y práctico. Máx 200 palabras.`;
   try{
     const history=S.aiMessages.slice(-8).map(m=>({role:m.role==="ai"?"assistant":"user",content:m.content}));
@@ -754,11 +761,13 @@ async function getAnthropicHeaders(){
 }
 async function callClaude(prompt){
   const r=await fetch(PROXY_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:ANTHROPIC_MODEL,max_tokens:1000,messages:[{role:"user",content:prompt}]})});
-  if(!r.ok)throw new Error(`API ${r.status}`);const d=await r.json();return d.content.map(b=>b.text||"").join("");
+  if(!r.ok){let detail="";try{const err=await r.json();detail=err?.error?.message||JSON.stringify(err).slice(0,120)}catch{};throw new Error(`API ${r.status}${detail?": "+detail:""}`)}
+  const d=await r.json();return d.content.map(b=>b.text||"").join("");
 }
 async function callClaudeWithSystem(system,messages){
   const r=await fetch(PROXY_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:ANTHROPIC_MODEL,max_tokens:1000,system,messages})});
-  if(!r.ok)throw new Error(`API ${r.status}`);const d=await r.json();return d.content.map(b=>b.text||"").join("");
+  if(!r.ok){let detail="";try{const err=await r.json();detail=err?.error?.message||JSON.stringify(err).slice(0,120)}catch{};throw new Error(`API ${r.status}${detail?": "+detail:""}`)}
+  const d=await r.json();return d.content.map(b=>b.text||"").join("");
 }
 
 function showModal(type){
