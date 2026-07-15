@@ -8,7 +8,7 @@
      ║  Supabase → Settings (⚙️) → API                              ║
      ╚══════════════════════════════════════════════════════════════╝ -->
 <script>
-window.SUPABASE_URL      = "https://ybixqmfozpjpuqdvbhsh.supabase.co/rest/v1";
+window.SUPABASE_URL      = "https://ybixqmfozpjpuqdvbhsh.supabase.co";
 window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InliaXhxbWZvenBqcHVxZHZiaHNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNDUxODQsImV4cCI6MjA5OTcyMTE4NH0.divrQ30Jz4FtwUE-JyWuZBIbov9HdDtzOaFf0Cc7gR8";
 </script>
 <!-- ╔══════════════════════════════════════════════════════════════╗
@@ -331,8 +331,14 @@ let S={
 };
 
 // ═══ Las llaves de Supabase se configuran ARRIBA DEL TODO de este archivo ═══
-const SUPABASE_URL = window.SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || "";
+function normalizeSupaUrl(u){
+  u=(u||"").trim().replace(/^["']|["']$/g,"");
+  if(!u)return"";
+  if(!/^https?:\/\//i.test(u))u="https://"+u;
+  try{return new URL(u).origin}catch{return u.replace(/\/+$/,"")}
+}
+const SUPABASE_URL = normalizeSupaUrl(window.SUPABASE_URL);
+const SUPABASE_ANON_KEY = (window.SUPABASE_ANON_KEY||"").trim().replace(/^["']|["']$/g,"");
 
 let sb=null,USER=null,OFFLINE=false;
 
@@ -380,7 +386,11 @@ async function authLogin(){
   if(!sb)return authMsg("Supabase no está configurado (revisa SUPABASE_URL y ANON_KEY)","error");
   authMsg("Entrando…","info");
   const {data,error}=await sb.auth.signInWithPassword({email,password:pass});
-  if(error){authMsg(error.message,"error");document.getElementById("auth-offline").style.display="block";return;}
+  if(error){
+    let extra="";
+    if(/invalid path|not found|failed to fetch/i.test(error.message))extra=` · Revisa el Project URL (estás usando: ${SUPABASE_URL||"vacío"})`;
+    authMsg(error.message+extra,"error");document.getElementById("auth-offline").style.display="block";return;
+  }
   USER=data.user;await startApp();
 }
 async function authSignup(){
@@ -390,7 +400,11 @@ async function authSignup(){
   if(!sb)return authMsg("Supabase no está configurado","error");
   authMsg("Creando cuenta…","info");
   const {data,error}=await sb.auth.signUp({email,password:pass});
-  if(error)return authMsg(error.message,"error");
+  if(error){
+    let extra="";
+    if(/invalid path|not found|failed to fetch/i.test(error.message))extra=` · Revisa el Project URL (estás usando: ${SUPABASE_URL||"vacío"})`;
+    return authMsg(error.message+extra,"error");
+  }
   if(data.session){USER=data.user;await startApp();}
   else authMsg("✅ Cuenta creada. Revisa tu email para confirmar, luego entra.","ok");
 }
