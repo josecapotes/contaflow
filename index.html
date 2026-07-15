@@ -470,8 +470,12 @@ function renderBalance(){
   const tA=allAssets.reduce((s,e)=>s+e.amount,0),tL=allLiabs.reduce((s,e)=>s+e.amount,0);
   const netInc=S.txns.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
   const eq=tA-tL;
+  const priorYears=S.years.filter(y=>y<S.year);
+  const priorCount=priorYears.reduce((s,y)=>s+((S.allTxns[y]||[]).length),0);
+  const needsCarry=S.bankAccounts.some(a=>(a.openingDate||"9999")<`${S.year}-01-01`);
+  const warn=(needsCarry&&priorYears.length&&!priorCount)?`<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.06)"><div style="font-size:12px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠️ Falta el historial de ${priorYears.join(", ")}</div><div style="font-size:11px;color:var(--muted);line-height:1.6">El saldo inicial de ${S.year} sale en $0.00 porque no hay transacciones cargadas en ${priorYears.join(", ")}. Importa ese año para que el arrastre sea correcto.</div></div>`:(needsCarry&&!priorYears.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.06)"><div style="font-size:12px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠️ Año anterior no registrado</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Tus cuentas abrieron antes de ${S.year}, pero no existe un año previo en la app. Agrégalo en Configuración → Años e importa su historial.</div></div>`:"");
   const row=e=>`<tr><td>${escHtml(e.name)}<br><span style="font-size:10px;color:var(--muted)">${escHtml(e.note||"")}</span></td><td style="text-align:right;font-weight:600">${fmt(e.amount)}</td><td>${e.auto?"":`<button onclick="removeBalanceEntry('${e.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`}</td></tr>`;
-  return`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Balance General</div><button class="btn btn-primary btn-sm" onclick="showModal('add-balance')">+ Agregar</button></div>
+  return`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Balance General</div><button class="btn btn-primary btn-sm" onclick="showModal('add-balance')">+ Agregar</button></div>${warn}
   <div class="grid" style="margin-bottom:18px"><div class="card kpi"><div class="kpi-label">Total Activos</div><div class="kpi-val" style="color:#3b82f6">${fmt(tA)}</div><div class="kpi-sub">${bankAssets.length} auto + ${assetE.length} manual</div></div><div class="card kpi"><div class="kpi-label">Total Pasivos</div><div class="kpi-val" style="color:#8b5cf6">${fmt(tL)}</div><div class="kpi-sub">${bankLiabs.length} auto + ${liabE.length} manual</div></div><div class="card kpi"><div class="kpi-label">Patrimonio</div><div class="kpi-val" style="color:${eq>=0?'#10b981':'#ef4444'}">${fmt(eq)}</div><div class="kpi-sub">Utilidad ${S.year}: ${fmt(netInc)}</div></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap">
   <div class="card" style="flex:1;min-width:240px"><div class="section-title" style="color:#3b82f6">ACTIVOS</div><table><thead><tr><th>Descripción</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${allAssets.map(row).join("")}${!allAssets.length?`<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Sin activos</td></tr>`:""}</tbody></table><div style="border-top:1px solid var(--border);padding:10px;text-align:right;font-family:var(--serif);font-size:14px;font-weight:600;color:#3b82f6">Total: ${fmt(tA)}</div></div>
@@ -703,7 +707,7 @@ function computeYearMovement(accountId,asOfDate){
   const acc=S.bankAccounts.find(a=>a.id===accountId);
   if(!acc)return 0;
   const openDate=acc.openingDate||"1900-01-01";
-  const txs=S.txns.filter(t=>t.accountId===accountId&&t.date>=openDate&&(!asOfDate||t.date<=asOfDate));
+  const txs=S.txns.filter(t=>t.accountId===accountId&&t.date>=openDate&&t.date.startsWith(String(S.year))&&(!asOfDate||t.date<=asOfDate));
   const sum=txs.reduce((s,t)=>s+t.amount,0);
   return acc.type==="credit"?-sum:sum;
 }
@@ -817,17 +821,30 @@ async function importJSON(){
       if(data.budget){S.budget=data.budget;await saveBudget()}
       if(data.balanceEntries){S.balanceEntries=data.balanceEntries;await saveBalanceEntries()}
       for(const [y,txs] of Object.entries(data.transactions||{}))await dbSet(`txns:${y}`,txs.map(t=>({...t,coaCode:t.coaCode||autoCategory(t)})));
+      S.allTxns={};for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
       await loadYearTxns(S.year);closeModal();updateSidebar();renderContent();toast("✅ Respaldo importado");
     }else if(Array.isArray(data)){
       const mapped=data.map(t=>({id:t.id||`imp_${Date.now()}_${Math.random()}`,date:(t.date||t.postedAt||"").slice(0,10),description:t.description||t.bankDescription||t.counterpartyName||"",amount:t.amount||0,counterparty:t.counterparty||t.counterpartyName||"",note:t.note||"",kind:t.kind||"",accountId:t.accountId||"",coaCode:t.coaCode||autoCategory(t),isManual:false}));
-      // Merge: use both id AND date+description+amount as duplicate keys
+      // Agrupa por año según la FECHA de cada transacción (no el año activo)
+      const byYear={};mapped.forEach(t=>{const y=parseInt((t.date||"").slice(0,4));if(y>=2020&&y<=2099)(byYear[y]=byYear[y]||[]).push(t)});
+      const badDates=mapped.length-Object.values(byYear).flat().length;
+      if(!Object.keys(byYear).length)return toast("❌ Ninguna transacción tiene fecha válida");
       const dupKey=t=>`${t.date}|${t.description}|${t.amount}`;
-      const newIds=new Set(mapped.map(t=>t.id));
-      const newKeys=new Set(mapped.map(t=>dupKey(t)));
-      const existing=S.txns.filter(t=>!newIds.has(t.id)&&!newKeys.has(dupKey(t)));
-      S.txns=[...existing,...mapped];await saveTxns();
-      if(!S.years.includes(S.year)){S.years=[...S.years,S.year].sort();await saveYears()}
-      closeModal();updateSidebar();renderContent();toast(`✅ ${mapped.length} transacciones importadas`);
+      let added=0;const touched=[];
+      for(const [y,txs] of Object.entries(byYear)){
+        const yr=Number(y);
+        const cur=yr===S.year?S.txns:(await dbGet(`txns:${yr}`)||[]);
+        const newIds=new Set(txs.map(t=>t.id)),newKeys=new Set(txs.map(t=>dupKey(t)));
+        const kept=cur.filter(t=>!newIds.has(t.id)&&!newKeys.has(dupKey(t)));
+        const merged=[...kept,...txs];
+        await dbSet(`txns:${yr}`,merged);S.allTxns[yr]=merged;
+        if(yr===S.year)S.txns=merged;
+        if(!S.years.includes(yr))S.years=[...S.years,yr].sort();
+        added+=txs.length;touched.push(yr);
+      }
+      await saveYears();
+      closeModal();updateSidebar();renderContent();
+      toast(`✅ ${added} transacciones importadas · años: ${touched.join(", ")}${badDates?` · ${badDates} sin fecha válida omitidas`:""}`);
     }else toast("❌ Formato no reconocido");
   }catch(e){toast("❌ Error JSON: "+e.message)}
 }
