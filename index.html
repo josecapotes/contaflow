@@ -293,7 +293,7 @@ let S={
     {id:"m5446",name:"Mercury Savings ••5446",bank:"Mercury",type:"savings",last4:"5446",color:"#f59e0b",note:"Reserva Impuestos",openingBalance:0,openingDate:"2025-01-01"},
     {id:"mcredit",name:"Mercury Credit (Tarjeta)",bank:"Mercury",type:"credit",last4:"",color:"#8b5cf6",note:"Tarjeta de crédito empresarial — balance = deuda actual",openingBalance:0,openingDate:"2025-01-01"},
   ],
-  years:[2025],txns:[],budget:{},balanceEntries:[],aiMessages:[],
+  years:[2025],txns:[],allTxns:{},budget:{},balanceEntries:[],aiMessages:[],
   filterSearch:"",filterCode:"",filterSign:"",
 };
 
@@ -311,6 +311,7 @@ async function loadState(){
     const bg=await dbGet("budget");if(bg)S.budget=bg;
     const be=await dbGet("balanceEntries");if(be)S.balanceEntries=be;
     const ai=await dbGet("aiMessages");if(ai)S.aiMessages=ai;
+    for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
     await loadYearTxns(S.year);
   }catch(e){console.warn(e)}
 }
@@ -318,11 +319,11 @@ async function saveSettings(){await dbSet("settings",S.settings)}
 async function saveCoa(){await dbSet("coa",S.coa)}
 async function saveBankAccts(){await dbSet("bankAccts",S.bankAccounts)}
 async function saveYears(){await dbSet("years",S.years)}
-async function saveTxns(){await dbSet(`txns:${S.year}`,S.txns)}
+async function saveTxns(){S.allTxns[S.year]=S.txns;await dbSet(`txns:${S.year}`,S.txns)}
 async function saveBudget(){await dbSet("budget",S.budget)}
 async function saveBalanceEntries(){await dbSet("balanceEntries",S.balanceEntries)}
 async function saveAiMessages(){await dbSet("aiMessages",S.aiMessages)}
-async function loadYearTxns(yr){const t=await dbGet(`txns:${yr}`);S.txns=t||[];}
+async function loadYearTxns(yr){const t=await dbGet(`txns:${yr}`);S.txns=t||[];S.allTxns[yr]=S.txns;}
 
 async function syncMercury(year,apiKey){
   const BASE="https://api.mercury.com/api/v1";
@@ -463,8 +464,8 @@ function renderBalance(){
   const entries=S.balanceEntries.filter(e=>e.year===S.year);
   const assetE=entries.filter(e=>e.type==="asset"),liabE=entries.filter(e=>e.type==="liability");
   // Auto: balances calculados de cuentas bancarias
-  const bankAssets=S.bankAccounts.filter(a=>a.type!=="credit").map(a=>({id:`auto_${a.id}`,name:a.name,amount:computeAccountBalance(a.id),note:"🔄 Calculado automático (transacciones + balance inicial)",auto:true}));
-  const bankLiabs=S.bankAccounts.filter(a=>a.type==="credit").map(a=>({id:`auto_${a.id}`,name:a.name,amount:computeAccountBalance(a.id),note:"🔄 Deuda calculada automática",auto:true})).filter(e=>Math.abs(e.amount)>0.005);
+  const bankAssets=S.bankAccounts.filter(a=>a.type!=="credit").map(a=>({id:`auto_${a.id}`,name:a.name,amount:computeAccountBalance(a.id),note:`Saldo inicial ${S.year}: ${fmt(computeAccountOpening(a.id))} · Movimiento ${S.year}: ${fmt(computeYearMovement(a.id))}`,auto:true}));
+  const bankLiabs=S.bankAccounts.filter(a=>a.type==="credit").map(a=>({id:`auto_${a.id}`,name:a.name,amount:computeAccountBalance(a.id),note:`Deuda inicial ${S.year}: ${fmt(computeAccountOpening(a.id))} · Movimiento ${S.year}: ${fmt(computeYearMovement(a.id))}`,auto:true})).filter(e=>Math.abs(e.amount)>0.005);
   const allAssets=[...bankAssets,...assetE],allLiabs=[...bankLiabs,...liabE];
   const tA=allAssets.reduce((s,e)=>s+e.amount,0),tL=allLiabs.reduce((s,e)=>s+e.amount,0);
   const netInc=S.txns.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
@@ -675,7 +676,7 @@ function renderAccounts(){
     const balColor=isLiab?(bal>0?'#ef4444':'#10b981'):(bal>=0?'#10b981':'#ef4444');
     const balLabel=isLiab?"Deuda Actual":"Balance Actual";
     return`<div class="card" style="flex:1;min-width:220px;border-left:4px solid ${a.color||'#10b981'};position:relative"><button onclick="removeAccount('${a.id}')" style="position:absolute;top:10px;right:10px;background:none;border:none;color:var(--muted);cursor:pointer">✕</button><div style="font-size:10px;color:${a.color||'#10b981'};text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">${escHtml(a.type)} · ${escHtml(a.bank)}</div><div style="font-size:15px;font-weight:600">${escHtml(a.name)}</div>${a.last4?`<div style="font-size:11px;color:var(--muted);margin-top:2px">••• ${a.last4}</div>`:""}
-    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"><div style="font-size:10px;color:var(--muted)">${balLabel}</div><div style="font-family:var(--serif);font-size:20px;font-weight:600;color:${balColor}">${fmt(bal)}</div></div>
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"><div style="font-size:10px;color:var(--muted)">${balLabel} · ${S.year}</div><div style="font-family:var(--serif);font-size:20px;font-weight:600;color:${balColor}">${fmt(bal)}</div><div style="font-size:9px;color:var(--muted);margin-top:3px">Saldo inicial ${S.year}: ${fmt(computeAccountOpening(a.id))} + movimiento ${fmt(computeYearMovement(a.id))}</div></div>
     <div style="margin-top:8px;display:flex;gap:6px;align-items:center"><label style="font-size:10px;color:var(--muted);white-space:nowrap">Balance inicial</label><input type="number" step="0.01" value="${a.openingBalance||0}" style="width:90px;font-size:11px" onchange="updateAccountOpening('${a.id}','openingBalance',this.value)"></div>
     <div style="margin-top:4px;display:flex;gap:6px;align-items:center"><label style="font-size:10px;color:var(--muted);white-space:nowrap">Desde fecha</label><input type="date" value="${a.openingDate||'2025-01-01'}" style="font-size:11px" onchange="updateAccountOpening('${a.id}','openingDate',this.value)"></div>
     ${a.note?`<div style="font-size:11px;color:var(--muted);margin-top:8px;font-style:italic">${escHtml(a.note)}</div>`:""}</div>`;
@@ -686,14 +687,28 @@ async function updateAccountOpening(id,field,val){
   S.bankAccounts=S.bankAccounts.map(a=>a.id===id?{...a,[field]:field==="openingBalance"?parseFloat(val)||0:val}:a);
   await saveBankAccts();renderContent();
 }
-function computeAccountBalance(accountId,asOfDate){
+function computeAccountOpening(accountId){
+  // Saldo de apertura del año seleccionado = balance inicial + movimientos de años anteriores
   const acc=S.bankAccounts.find(a=>a.id===accountId);
   if(!acc)return 0;
-  const opening=acc.openingBalance||0;
   const openDate=acc.openingDate||"1900-01-01";
-  const relevant=S.txns.filter(t=>t.accountId===accountId&&t.date>=openDate&&(!asOfDate||t.date<=asOfDate));
-  const sum=relevant.reduce((s,t)=>s+t.amount,0);
-  return acc.type==="credit"?opening-sum:opening+sum;
+  const yearStart=`${S.year}-01-01`;
+  const prior=Object.entries(S.allTxns).flatMap(([y,txs])=>Number(y)<S.year?txs:[])
+    .filter(t=>t.accountId===accountId&&t.date>=openDate&&t.date<yearStart);
+  const sum=prior.reduce((s,t)=>s+t.amount,0);
+  return acc.type==="credit"?(acc.openingBalance||0)-sum:(acc.openingBalance||0)+sum;
+}
+function computeYearMovement(accountId,asOfDate){
+  // Movimiento SOLO del año seleccionado
+  const acc=S.bankAccounts.find(a=>a.id===accountId);
+  if(!acc)return 0;
+  const openDate=acc.openingDate||"1900-01-01";
+  const txs=S.txns.filter(t=>t.accountId===accountId&&t.date>=openDate&&(!asOfDate||t.date<=asOfDate));
+  const sum=txs.reduce((s,t)=>s+t.amount,0);
+  return acc.type==="credit"?-sum:sum;
+}
+function computeAccountBalance(accountId,asOfDate){
+  return computeAccountOpening(accountId)+computeYearMovement(accountId,asOfDate);
 }
 
 function renderCoa(){
