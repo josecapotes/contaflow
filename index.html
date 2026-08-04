@@ -239,6 +239,7 @@ document.head.appendChild(manifestLink);
 // ═══════════════════════════════════════════
 const ANTHROPIC_MODEL = "claude-sonnet-4-6";
 const PROXY_URL = "https://contaflow-ai.josecapotes.workers.dev";
+const MERCURY_PROXY = "https://contaflow-mercury.josecapotes.workers.dev";
 const DEFAULT_COA = [
   {code:"1000",name:"ACTIVOS",type:"asset",group:"header"},
   {code:"1010",name:"Mercury Checking ••3721",type:"asset",group:"bank"},
@@ -290,10 +291,20 @@ const AUTO_INCOME=[
   {re:/catedral|cathedral|iglesia/i,code:"4010"},
   {re:/genova|beauty/i,code:"4020"},
 ];
+const MERCURY_CAT_MAP={
+  Software:"5200",InternetAndTelephone:"6300",Utilities:"6300",Advertising:"5100",
+  ProfessionalServices:"5300",Legal:"5300",Taxes:"2200",Restaurants:"5700",
+  FoodDelivery:"5700",OfficeSupplies:"5900",Shipping:"5900",Memberships:"5500",
+  Education:"5500",Conferences:"5500",FuelAndGas:"6400",GroundTransportation:"6400",
+  RideshareAndTaxis:"6400",Airlines:"6400",Lodging:"6400",Insurance:"5800",
+  Electronics:"5010",Retail:"5010",Grocery:"5700"
+};
 function autoCategory(tx){
   const t=`${tx.description||''} ${tx.counterparty||''}`.toLowerCase();
   if(tx.amount>0){for(const r of AUTO_INCOME)if(r.re.test(t))return r.code;return"4090";}
-  for(const r of AUTO_RULES)if(r.re.test(t))return r.code;return"5900";
+  for(const r of AUTO_RULES)if(r.re.test(t))return r.code;
+  if(tx.mercuryCategory&&MERCURY_CAT_MAP[tx.mercuryCategory])return MERCURY_CAT_MAP[tx.mercuryCategory];
+  return"5900";
 }
 const TABS=[
   {id:"dashboard",icon:"📊",label:"Dashboard",s:"reportes"},
@@ -318,7 +329,7 @@ const SEC_LABELS={reportes:"📊 Reportes",plan:"📅 Planificación",datos:"�
 
 let S={
   tab:"dashboard",year:2025,
-  settings:{companyName:"Joint Strategy USA, LLC",state:"Florida",entity:"LLC Pass-Through",currency:"USD",mercuryApiKey:"",anthropicApiKey:""},
+  settings:{companyName:"Joint Strategy USA, LLC",state:"Florida",entity:"LLC Pass-Through",currency:"USD",anthropicApiKey:""},
   coa:DEFAULT_COA,
   bankAccounts:[
     {id:"m3721",name:"Mercury Checking ••3721",bank:"Mercury",type:"checking",last4:"3721",color:"#10b981",note:"Cuenta principal",openingBalance:0,openingDate:"2025-01-01"},
@@ -465,40 +476,102 @@ async function saveBalanceEntries(){await dbSet("balanceEntries",S.balanceEntrie
 async function saveAiMessages(){await dbSet("aiMessages",S.aiMessages)}
 async function loadYearTxns(yr){const t=await dbGet(`txns:${yr}`);S.txns=t||[];S.allTxns[yr]=S.txns;}
 
-async function syncMercury(year,apiKey){
-  const BASE="https://api.mercury.com/api/v1";
-  const hdrs={"Authorization":`Bearer ${apiKey}`};
-  let all=[],limit=500,startAfter=null;
+// Llama al Worker de Mercury con la sesión de Supabase como credencial
+async function mercuryCall(path){
+  if(!sb||!USER)throw new Error("Necesitas iniciar sesión para sincronizar");
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session)throw new Error("Sesión expirada — vuelve a entrar");
+  const r=await fetch(MERCURY_PROXY,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":`Bearer ${session.access_token}`},
+    body:JSON.stringify({path})
+  });
+  const txt=await r.text();
+  if(!r.ok){
+    let msg=`Error ${r.status}`;
+    try{const j=JSON.parse(txt);msg=j.error+(j.detail?": "+j.detail:"")}catch{msg=txt.slice(0,200)}
+    throw new Error(msg);
+  }
+  return JSON.parse(txt);
+}
+
+// Mapea las cuentas Mercury (UUID) a tus ids locales (m3721...) por los últimos 4 dígitos
+async function buildAccountMap(){
+  const data=await mercuryCall("/accounts");
+  const accts=data.accounts||data||[];
+  const map={};
+  accts.forEach(a=>{
+    const num=(a.accountNumber||a.routingNumber||"").replace(/\D/g,"");
+    const last4=num.slice(-4);
+    const local=S.bankAccounts.find(b=>b.last4&&b.last4===last4);
+    if(local)map[a.id]=local.id;
+    else if(/credit/i.test(a.type||a.kind||a.nickname||""))map[a.id]="mcredit";
+  });
+  return map;
+}
+
+async function syncMercury(year,acctMap){
+  let all=[],startAfter=null;
   while(true){
-    const p=new URLSearchParams({postedStart:`${year}-01-01`,postedEnd:`${year}-12-31`,limit,order:"asc","status[]":"sent"});
-    if(startAfter)p.set("start_after",startAfter);
-    const res=await fetch(`${BASE}/transactions?${p}`,{headers:hdrs});
-    if(!res.ok)throw new Error(`Mercury API: ${res.status}`);
-    const data=await res.json();const batch=data.transactions||[];
+    let path=`/transactions?start=${year}-01-01&end=${year}-12-31&limit=1000&order=asc&status=sent`;
+    if(startAfter)path+=`&start_after=${startAfter}`;
+    const data=await mercuryCall(path);
+    const batch=data.transactions||[];
     all=all.concat(batch);
-    if(batch.length<limit||!data.page?.nextPage)break;
+    if(batch.length<1000||!data.page?.nextPage)break;
     startAfter=data.page.nextPage;
   }
-  return all.filter(t=>{if(t.kind==="internalTransfer")return false;const bd=(t.bankDescription||"").toLowerCase();return!bd.includes("io autopay")&&!bd.includes("backup to primary");})
-    .map(t=>({id:t.id,date:(t.postedAt||t.createdAt||"").slice(0,10),description:t.bankDescription||t.counterpartyName||"",amount:t.amount,counterparty:t.counterpartyName||"",note:t.note||"",kind:t.kind||"",accountId:t.accountId||"",coaCode:"",isManual:false}))
-    .map(t=>({...t,coaCode:autoCategory(t)}));
+  // Etiqueta transferencias internas (no las borra) y mapea la cuenta
+  const isXfer=t=>{
+    if(t.kind==="internalTransfer")return true;
+    const bd=(t.bankDescription||"").toLowerCase();
+    return bd.includes("io autopay")||bd.includes("backup to primary")||bd.includes("mercury initiated payment");
+  };
+  return all.map(t=>{
+    const xfer=isXfer(t);
+    return{
+      id:t.id,
+      date:(t.postedAt||t.createdAt||"").slice(0,10),
+      description:t.bankDescription||t.counterpartyName||"",
+      amount:t.amount,
+      counterparty:t.counterpartyName||"",
+      note:t.note||"",
+      kind:xfer?"transfer":"",
+      accountId:acctMap[t.accountId]||"",
+      mercuryCategory:t.mercuryCategory||"",
+      coaCode:xfer?"":autoCategory({description:t.bankDescription||t.counterpartyName||"",counterparty:t.counterpartyName||"",amount:t.amount,mercuryCategory:t.mercuryCategory}),
+      isManual:false
+    };
+  });
 }
 
 async function handleSync(){
-  const key=S.settings.mercuryApiKey?.trim();
-  if(!key){showModal("sync-options");return;}
-  const btn=document.getElementById("sync-btn");btn.disabled=true;setMsg("Conectando…");
+  if(!sb||!USER){setErr("⚠️ Inicia sesión para sincronizar con Mercury");return;}
+  const btn=document.getElementById("sync-btn");btn.disabled=true;setMsg("Conectando con Mercury…");
   try{
-    const fetched=await syncMercury(S.year,key);
-    S.txns=[...fetched,...S.txns.filter(t=>t.isManual)];
+    setMsg("Mapeando cuentas…");
+    const acctMap=await buildAccountMap();
+    if(!Object.keys(acctMap).length)throw new Error("No pude emparejar las cuentas. ¿Coinciden los últimos 4 dígitos en la pestaña Cuentas?");
+    setMsg("Descargando transacciones…");
+    const fetched=await syncMercury(S.year,acctMap);
+    // FUSIÓN (no borra): conserva manuales, CSV, conciliaciones. Actualiza por id + dedup por fecha|desc|monto.
+    const dupKey=t=>`${t.date}|${t.description}|${t.amount}`;
+    const fetchedIds=new Set(fetched.map(t=>t.id));
+    const fetchedKeys=new Set(fetched.map(dupKey));
+    const kept=S.txns.filter(t=>!fetchedIds.has(t.id)&&!fetchedKeys.has(dupKey(t)));
+    // Preserva marcas de conciliación previas si el id coincide
+    const prevRecon={};S.txns.forEach(t=>{if(t.reconciled)prevRecon[t.id]=true});
+    const merged=fetched.map(t=>prevRecon[t.id]?{...t,reconciled:true}:t);
+    S.txns=[...kept,...merged];
     if(!S.years.includes(S.year)){S.years=[...S.years,S.year].sort();await saveYears();}
     await saveTxns();updateSidebar();renderContent();
-    setMsg(`✅ ${fetched.length} transacciones`);toast(`✅ ${fetched.length} transacciones importadas`);
-    setTimeout(()=>setMsg(""),5000);
+    const nNew=fetched.length-(S.txns.length-kept.length-fetched.length<0?0:0);
+    setMsg(`✅ ${fetched.length} de Mercury · ${kept.length} propias conservadas`);
+    toast(`✅ Sincronizado: ${fetched.length} transacciones de Mercury`);
+    setTimeout(()=>setMsg(""),6000);
   }catch(e){
-    setErr("Error: "+e.message);
-    if(e.message.includes("fetch")||e.message.includes("CORS")){setErr("⚠️ CORS. Usa Importar JSON.");showModal("sync-options");}
-    setTimeout(()=>setErr(""),8000);
+    setErr("❌ "+e.message);
+    setTimeout(()=>setErr(""),10000);
   }
   btn.disabled=false;
 }
@@ -891,16 +964,16 @@ function renderSettings(){
   return`<div style="max-width:640px;display:flex;flex-direction:column;gap:18px">
   <div class="card"><div class="section-title">🏢 Empresa</div><div class="input-row"><div style="flex:1"><label>Nombre</label><input id="s-company" value="${escHtml(S.settings.companyName)}" style="width:100%"></div></div><div class="input-row"><div style="flex:1"><label>Estado</label><input id="s-state" value="${escHtml(S.settings.state)}" style="width:100%"></div><div style="flex:1"><label>Entidad</label><input id="s-entity" value="${escHtml(S.settings.entity)}" style="width:100%"></div></div><button class="btn btn-primary btn-sm" onclick="saveSettingsForm()">Guardar</button></div>
   <div class="card"><div class="section-title">🤖 Anthropic API Key (para IA)</div><p style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">Obtén tu key en <strong>console.anthropic.com → API Keys</strong>. Se guarda solo en este dispositivo.</p><div class="input-row"><div style="flex:1"><label>API Key</label><input id="s-anthropic" type="password" value="${escHtml(S.settings.anthropicApiKey||"")}" placeholder="sk-ant-xxxxxxxxxxxxxxxx" style="width:100%;font-family:monospace"></div></div><button class="btn btn-purple btn-sm" onclick="saveAnthropicKey()">Guardar API Key IA</button></div>
-  <div class="card"><div class="section-title">🔑 Mercury Bank API Key</div><p style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">Ve a <strong>app.mercury.com → Settings → API</strong>. Se guarda localmente.</p><div class="input-row"><div style="flex:1"><label>API Key</label><input id="s-apikey" type="password" value="${escHtml(S.settings.mercuryApiKey||"")}" placeholder="mercury_xxxxxxxxxxxxxxxx" style="width:100%;font-family:monospace"></div></div><button class="btn btn-primary btn-sm" onclick="saveApiKey()">Guardar</button><button class="btn btn-ghost btn-sm" onclick="testApiKey()" style="margin-left:8px">Probar</button></div>
+  <div class="card"><div class="section-title">🔑 Conexión con Mercury Bank</div><p style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.7">Tu token de Mercury vive <strong>de forma segura</strong> en el servidor proxy (Cloudflare Worker), nunca en este navegador ni en la nube de datos. La sincronización usa tu sesión para autenticarte.</p><div style="font-size:11px;padding:8px 10px;border-radius:6px;background:${(sb&&USER)?'rgba(16,185,129,.1)':'rgba(245,158,11,.1)'};color:${(sb&&USER)?'#10b981':'#f59e0b'}">${(sb&&USER)?'✅ Conectado — usa el botón 🔄 Sincronizar (arriba) para traer tus transacciones del año seleccionado':'⚠️ Inicia sesión para poder sincronizar con Mercury'}</div><div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.6">💡 La sincronización <strong>fusiona</strong>: trae lo de Mercury sin borrar tus entradas manuales, importaciones CSV ni conciliaciones. Empareja cuentas por los últimos 4 dígitos.</div></div>
   <div class="card"><div class="section-title">📅 Años Fiscales</div><div style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><input id="new-year" type="number" placeholder="2026" style="width:120px" min="2020" max="2099"><button class="btn btn-primary btn-sm" onclick="addYear()">+ Agregar</button></div><div style="display:flex;gap:8px;flex-wrap:wrap">${S.years.map(y=>`<div style="display:flex;align-items:center;gap:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:6px 12px"><span style="font-family:var(--serif);font-size:15px;color:#3b82f6;font-weight:600">${y}</span><button onclick="removeYear(${y})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px">🗑</button></div>`).join("")}</div></div>
   <div class="card" style="border-color:rgba(16,185,129,.3)"><div class="section-title">💾 Exportar / Importar</div><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#6ee7b7;line-height:1.7">⚠️ Exporta antes de actualizar en Netlify. El backup incluye TODOS los años.</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="exportAllData()">⬇️ Exportar JSON (todos los años)</button><button class="btn btn-ghost btn-sm" onclick="exportTxns()">⬇️ CSV ${S.year}</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-json')">⬆️ Importar JSON</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-csv')">⬆️ Importar CSV Mercury</button></div></div>
 <div class="card" style="margin-bottom:14px"><div class="section-title">☁️ Sesión y Sincronización</div>${USER?`<div style="font-size:12px;margin-bottom:4px">Conectado como <strong>${escHtml(USER.email||"")}</strong></div><div style="font-size:11px;color:#10b981;margin-bottom:12px">✅ Sincronizando con la nube — tus datos están en todos tus dispositivos</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="showModal('migrate')">☁️ Subir datos locales a la nube</button><button class="btn btn-ghost btn-sm" onclick="authLogout()">🚪 Cerrar sesión</button></div>`:`<div style="font-size:12px;color:#f59e0b;margin-bottom:6px">${OFFLINE?"📴 Modo local (sin conexión)":"⚠️ Sin configurar Supabase"}</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Los datos se guardan solo en este navegador y <strong>no</strong> se sincronizan con el móvil. ${OFFLINE?'<a href="#" onclick="location.reload();return false" style="color:#3b82f6">Reconectar</a>':""}</div>`}</div>
   <div class="card" style="border-color:rgba(239,68,68,.3)"><div class="section-title" style="color:#ef4444">⚠️ Zona de Peligro</div><button class="btn btn-danger btn-sm" onclick="clearYearData()">🗑 Borrar datos de ${S.year}</button></div></div>`;
 }
 async function saveSettingsForm(){S.settings.companyName=document.getElementById("s-company").value;S.settings.state=document.getElementById("s-state").value;S.settings.entity=document.getElementById("s-entity").value;await saveSettings();updateSidebar();toast("✅ Guardado")}
-async function saveApiKey(){S.settings.mercuryApiKey=document.getElementById("s-apikey").value;await saveSettings();toast("✅ Mercury API Key guardada")}
+async function saveApiKey(){toast("La API key ahora se maneja de forma segura en el servidor")}
 async function saveAnthropicKey(){S.settings.anthropicApiKey=document.getElementById("s-anthropic").value;await saveSettings();toast("✅ Anthropic API Key guardada")}
-async function testApiKey(){const key=document.getElementById("s-apikey").value.trim();if(!key){toast("⚠️ Ingresa una API key");return}toast("⏳ Probando…");try{const r=await fetch("https://api.mercury.com/api/v1/accounts",{headers:{Authorization:`Bearer ${key}`}});if(r.ok){const d=await r.json();toast(`✅ OK! ${d.accounts?.length||0} cuentas`)}else toast(`❌ Error ${r.status}`);}catch{toast("⚠️ CORS bloqueado. Usa Importar JSON.")}}
+async function testApiKey(){toast("Usa el botón 🔄 Sincronizar para probar la conexión")}
 async function addYear(){const y=+document.getElementById("new-year").value;if(!y||y<2020||y>2099)return toast("⚠️ Año inválido");if(S.years.includes(y))return toast("⚠️ Ya existe");S.years=[...S.years,y].sort();await saveYears();buildYearSelect();renderContent();toast(`✅ Año ${y} agregado`)}
 async function removeYear(y){if(!confirm(`¿Borrar año ${y} y sus datos?`))return;S.years=S.years.filter(x=>x!==y);await saveYears();await dbSet(`txns:${y}`,[]);if(S.year===y){S.year=S.years[S.years.length-1]||2025;await loadYearTxns(S.year)}buildYearSelect();updateSidebar();renderContent();toast(`✅ Año ${y} eliminado`)}
 async function clearYearData(){if(!confirm(`¿Borrar transacciones de ${S.year}?`))return;S.txns=[];await saveTxns();updateSidebar();renderContent();toast("✅ Datos borrados")}
