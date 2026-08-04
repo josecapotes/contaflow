@@ -120,8 +120,8 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--dim);border-radius:2px}
-@media(max-width:640px){
-  #sidebar{position:fixed;left:0;top:0;height:100%;transform:translateX(-100%);width:80%;max-width:280px;box-shadow:2px 0 20px rgba(0,0,0,.5)}
+@media(max-width:900px){
+  #sidebar{position:fixed;left:0;top:0;height:100%;transform:translateX(-100%);width:78%;max-width:300px;box-shadow:2px 0 20px rgba(0,0,0,.5)}
   #sidebar.open{transform:translateX(0)}
   .sidebar-close{display:block}
   #menu-toggle{display:block}
@@ -133,27 +133,26 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
   .grid{gap:10px}
   .kpi{min-width:calc(50% - 6px);flex:1 1 calc(50% - 6px)}
   .kpi .kpi-val{font-size:18px}
-  /* Tablas: scroll horizontal suave con indicador */
+  /* Tablas: scroll horizontal suave */
   .card{padding:14px;overflow-x:auto}
-  table{min-width:520px;font-size:11px}
+  table{min-width:480px;font-size:12px}
   th,td{padding:8px 6px}
   /* Botones y toques más grandes */
   .btn{padding:9px 12px;font-size:12px}
   .btn-sm{padding:7px 10px}
-  input,select,textarea{font-size:16px;padding:10px} /* 16px evita zoom en iOS */
+  input,select,textarea{font-size:16px;padding:10px}
   /* Modales a pantalla casi completa */
   .modal{width:96%;max-width:96%;padding:18px;max-height:92vh}
   .input-row{flex-direction:column;align-items:stretch;gap:8px}
   .input-row>div{width:100%}
-  /* AI burbujas más anchas */
   .ai-bubble{max-width:96%}
-  /* Barra de actualización */
   #update-bar{padding:8px 12px;font-size:11px}
-  /* Ocultar columnas menos críticas en tablas de transacciones */
   .hide-mobile{display:none}
 }
-@media(max-width:400px){
+@media(max-width:480px){
   .kpi{min-width:100%;flex:1 1 100%}
+  #content{padding:10px}
+  table{font-size:11px}
 }
 </style>
 </head>
