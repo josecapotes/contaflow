@@ -121,12 +121,39 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--dim);border-radius:2px}
 @media(max-width:640px){
-  #sidebar{position:fixed;left:0;top:0;height:100%;transform:translateX(-100%)}
+  #sidebar{position:fixed;left:0;top:0;height:100%;transform:translateX(-100%);width:80%;max-width:280px;box-shadow:2px 0 20px rgba(0,0,0,.5)}
   #sidebar.open{transform:translateX(0)}
   .sidebar-close{display:block}
   #menu-toggle{display:block}
-  #content{padding:14px}
-  .kpi{min-width:calc(50% - 8px)}
+  #content{padding:12px}
+  #topbar{padding:10px 12px;gap:8px;min-height:auto}
+  #topbar-title{font-size:14px}
+  #sync-msg,#sync-err{max-width:160px;font-size:10px}
+  /* KPIs en 2 columnas */
+  .grid{gap:10px}
+  .kpi{min-width:calc(50% - 6px);flex:1 1 calc(50% - 6px)}
+  .kpi .kpi-val{font-size:18px}
+  /* Tablas: scroll horizontal suave con indicador */
+  .card{padding:14px;overflow-x:auto}
+  table{min-width:520px;font-size:11px}
+  th,td{padding:8px 6px}
+  /* Botones y toques más grandes */
+  .btn{padding:9px 12px;font-size:12px}
+  .btn-sm{padding:7px 10px}
+  input,select,textarea{font-size:16px;padding:10px} /* 16px evita zoom en iOS */
+  /* Modales a pantalla casi completa */
+  .modal{width:96%;max-width:96%;padding:18px;max-height:92vh}
+  .input-row{flex-direction:column;align-items:stretch;gap:8px}
+  .input-row>div{width:100%}
+  /* AI burbujas más anchas */
+  .ai-bubble{max-width:96%}
+  /* Barra de actualización */
+  #update-bar{padding:8px 12px;font-size:11px}
+  /* Ocultar columnas menos críticas en tablas de transacciones */
+  .hide-mobile{display:none}
+}
+@media(max-width:400px){
+  .kpi{min-width:100%;flex:1 1 100%}
 }
 </style>
 </head>
@@ -153,10 +180,12 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
     </div>
     <nav id="nav"></nav>
     <div class="sidebar-footer">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">Utilidad Neta del Año</div>
       <div class="sidebar-net" id="sidebar-net">—</div>
-      <div class="sidebar-meta" id="sidebar-meta">Utilidad neta estimada</div>
+      <div class="sidebar-meta" id="sidebar-meta">Ingresos − Gastos</div>
     </div>
   </aside>
+  <div id="sidebar-backdrop" onclick="toggleSidebar()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99"></div>
   <div id="main">
     <div id="topbar">
       <button id="menu-toggle" onclick="toggleSidebar()">☰</button>
@@ -610,8 +639,8 @@ function buildNav(){
 }
 function buildYearSelect(){const sel=document.getElementById("year-select");sel.innerHTML=S.years.map(y=>`<option value="${y}" ${y===S.year?"selected":""}>${y}</option>`).join("");}
 async function changeYear(y){S.year=+y;await loadYearTxns(S.year);updateSidebar();renderContent();}
-function goTab(id){S.tab=id;S.filterSearch="";S.filterCode="";S.filterSign="";const t=TABS.find(x=>x.id===id);document.getElementById("topbar-title").textContent=t?.label||id;buildNav();renderContent();if(window.innerWidth<=640)document.getElementById("sidebar").classList.remove("open");}
-function toggleSidebar(){document.getElementById("sidebar").classList.toggle("open")}
+function goTab(id){S.tab=id;S.filterSearch="";S.filterCode="";S.filterSign="";const t=TABS.find(x=>x.id===id);document.getElementById("topbar-title").textContent=t?.label||id;buildNav();renderContent();if(window.innerWidth<=640){document.getElementById("sidebar").classList.remove("open");const bd=document.getElementById("sidebar-backdrop");if(bd)bd.style.display="none";}}
+function toggleSidebar(){const sb=document.getElementById("sidebar");sb.classList.toggle("open");const bd=document.getElementById("sidebar-backdrop");if(bd)bd.style.display=sb.classList.contains("open")&&window.innerWidth<=640?"block":"none";}
 function updateSidebar(){
   buildYearSelect();buildNav();
   document.getElementById("sidebar-company").textContent=S.settings.companyName?.split(",")[0]||"";
@@ -787,7 +816,7 @@ function renderTxns(){
   const lc=S.coa.filter(c=>c.group!=="header");
   const filtered=S.txns.filter(t=>{const q=S.filterSearch.toLowerCase();if(q&&!`${t.description} ${t.counterparty}`.toLowerCase().includes(q))return false;if(S.filterCode&&t.coaCode!==S.filterCode)return false;if(S.filterSign==="income"&&t.amount<=0)return false;if(S.filterSign==="expense"&&t.amount>=0)return false;return true;}).sort((a,b)=>b.date.localeCompare(a.date));
   return`<div class="card card-sm" style="margin-bottom:14px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input id="tx-search" style="width:200px" placeholder="🔍 Buscar..." value="${escHtml(S.filterSearch)}" oninput="S.filterSearch=this.value;renderContent()"><select style="max-width:220px" onchange="S.filterCode=this.value;renderContent()"><option value="">Todas las categorías</option>${lc.map(c=>`<option value="${c.code}" ${c.code===S.filterCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("")}</select><select onchange="S.filterSign=this.value;renderContent()"><option value="" ${!S.filterSign?"selected":""}>Todos</option><option value="income" ${S.filterSign==="income"?"selected":""}>Ingresos</option><option value="expense" ${S.filterSign==="expense"?"selected":""}>Gastos</option></select><div style="flex:1"></div><button class="btn btn-purple btn-sm" onclick="aiCategorizeTxns()">🤖 Categorizar IA</button><button class="btn btn-ghost btn-sm" onclick="autoAll()">⚡ Auto</button><button class="btn btn-primary btn-sm" onclick="showModal('add-tx')">+ Manual</button></div></div>
-  <div class="card card-sm"><div style="font-size:11px;color:var(--muted);margin-bottom:10px">${filtered.length} transacciones · <span id="ai-cat-status"></span></div><div style="overflow-x:auto"><table><thead><tr><th>Fecha</th><th>Descripción</th><th>Contraparte</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead><tbody>${filtered.map(t=>{const opts=lc.map(c=>`<option value="${c.code}" ${c.code===t.coaCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("");return`<tr><td style="color:var(--muted);white-space:nowrap;font-size:11px">${fmtDateFull(t.date)}</td><td style="max-width:200px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</div>${t.note?`<div style="font-size:10px;color:var(--muted)">${escHtml(t.note)}</div>`:""}${t.isManual?'<span class="tag tag-gold">Manual</span>':""}${t.aiCategorized?'<span class="tag tag-purple">IA</span>':""}${t.kind==="transfer"?'<span class="tag" style="background:#3b82f622;color:#3b82f6">🔄 Transferencia</span>':""}${t.reconciled?'<span class="tag" style="background:#10b98122;color:#10b981">✓ Conciliada</span>':""}</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${escHtml(t.counterparty)}</td><td><select style="font-size:11px;max-width:200px" onchange="updateTxCoa('${t.id}',this.value)"><option value="">Sin categoría</option>${opts}</select></td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600;white-space:nowrap">${fmt(t.amount)}</td><td>${t.isManual?`<button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">✕</button>`:""}</td></tr>`;}).join("")}${filtered.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Sin resultados</td></tr>`:""}</tbody></table></div></div>`;
+  <div class="card card-sm"><div style="font-size:11px;color:var(--muted);margin-bottom:10px">${filtered.length} transacciones · <span id="ai-cat-status"></span></div><div style="overflow-x:auto"><table><thead><tr><th>Fecha</th><th>Descripción</th><th class="hide-mobile">Contraparte</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead><tbody>${filtered.map(t=>{const opts=lc.map(c=>`<option value="${c.code}" ${c.code===t.coaCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("");return`<tr><td style="color:var(--muted);white-space:nowrap;font-size:11px">${fmtDateFull(t.date)}</td><td style="max-width:200px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</div>${t.note?`<div style="font-size:10px;color:var(--muted)">${escHtml(t.note)}</div>`:""}${t.isManual?'<span class="tag tag-gold">Manual</span>':""}${t.aiCategorized?'<span class="tag tag-purple">IA</span>':""}${t.kind==="transfer"?'<span class="tag" style="background:#3b82f622;color:#3b82f6">🔄 Transferencia</span>':""}${t.reconciled?'<span class="tag" style="background:#10b98122;color:#10b981">✓ Conciliada</span>':""}</td><td class="hide-mobile" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${escHtml(t.counterparty)}</td><td><select style="font-size:11px;max-width:200px" onchange="updateTxCoa('${t.id}',this.value)"><option value="">Sin categoría</option>${opts}</select></td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600;white-space:nowrap">${fmt(t.amount)}</td><td>${t.isManual?`<button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">✕</button>`:""}</td></tr>`;}).join("")}${filtered.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Sin resultados</td></tr>`:""}</tbody></table></div></div>`;
 }
 async function updateTxCoa(id,code){S.txns=S.txns.map(t=>t.id===id?{...t,coaCode:code}:t);await saveTxns();updateSidebar();}
 async function autoAll(){S.txns=S.txns.map(t=>t.kind==="transfer"?t:{...t,coaCode:autoCategory(t)});await saveTxns();renderContent();toast("✅ Auto-categorización completa")}
