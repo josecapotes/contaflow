@@ -507,6 +507,12 @@ async function buildAccountMap(){
     if(local)map[a.id]=local.id;
     else if(/credit/i.test(a.type||a.kind||a.nickname||""))map[a.id]="mcredit";
   });
+  // Intenta agregar cuentas de crédito (endpoint aparte)
+  try{
+    const cd=await mercuryCall("/credit");
+    const creditAccts=cd.accounts||cd||[];
+    creditAccts.forEach(a=>{if(a.id)map[a.id]="mcredit"});
+  }catch(e){/* si no hay endpoint de crédito, las tarjetas se detectan por kind */}
   return map;
 }
 
@@ -525,10 +531,19 @@ async function syncMercury(year,acctMap){
   const isXfer=t=>{
     if(t.kind==="internalTransfer")return true;
     const bd=(t.bankDescription||"").toLowerCase();
-    return bd.includes("io autopay")||bd.includes("backup to primary")||bd.includes("mercury initiated payment");
+    return bd.includes("io autopay")||bd.includes("backup to primary")||bd.includes("mercury initiated payment")||bd.includes("percentage-based rule");
   };
+  // Las compras/créditos de tarjeta van a la cuenta mcredit aunque no estén en /accounts
+  const isCard=t=>t.kind==="creditCardTransaction"||t.kind==="creditCardCredit";
   return all.map(t=>{
     const xfer=isXfer(t);
+    const card=isCard(t);
+    let accountId=card?"mcredit":(acctMap[t.accountId]||"");
+    if(!accountId&&xfer){
+      const bd=(t.bankDescription||"").toLowerCase();
+      const cn=(t.counterpartyName||"").toLowerCase();
+      if(bd.includes("io autopay")||cn.includes("mercury credit")||bd.includes("mercury credit"))accountId="mcredit";
+    }
     return{
       id:t.id,
       date:(t.postedAt||t.createdAt||"").slice(0,10),
@@ -537,7 +552,7 @@ async function syncMercury(year,acctMap){
       counterparty:t.counterpartyName||"",
       note:t.note||"",
       kind:xfer?"transfer":"",
-      accountId:acctMap[t.accountId]||"",
+      accountId,
       mercuryCategory:t.mercuryCategory||"",
       coaCode:xfer?"":autoCategory({description:t.bankDescription||t.counterpartyName||"",counterparty:t.counterpartyName||"",amount:t.amount,mercuryCategory:t.mercuryCategory}),
       isManual:false
