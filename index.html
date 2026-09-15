@@ -490,6 +490,7 @@ async function loadState(){
     const bg=await dbGet("budget");if(bg)S.budget=bg;
     const be=await dbGet("balanceEntries");if(be)S.balanceEntries=be;
     const ai=await dbGet("aiMessages");if(ai)S.aiMessages=ai;
+    const ad=await dbGet("alertDismissed");if(ad)S.alertDismissed=ad;
     for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
     await loadYearTxns(S.year);
   }catch(e){console.warn(e)}
@@ -683,7 +684,7 @@ function renderPL(){
   const sum=code=>S.txns.filter(t=>t.coaCode===code).reduce((s,t)=>s+Math.abs(t.amount),0);
   const tR=revA.reduce((s,a)=>s+sum(a.code),0),tE=expA.reduce((s,a)=>s+sum(a.code),0),net=tR-tE;
   const taxNote=net>0?`SE Tax est.: ${fmt(net*.9235*.153)} | Income Tax est.: ${fmt((net-net*.9235*.153/2)*.10)}`:"Sin obligación fiscal estimada";
-  return`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Estado de Resultados</div><div style="display:flex;gap:8px"><button class="btn btn-purple btn-sm" onclick="aiSummarizePL()">🤖 Resumen IA</button><button class="btn btn-ghost btn-sm" onclick="exportPL()">⬇️ Exportar</button></div></div>
+  return`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Estado de Resultados</div><div style="display:flex;gap:8px"><button class="btn btn-purple btn-sm" onclick="aiSummarizePL()">🤖 Resumen IA</button><button class="btn btn-ghost btn-sm" onclick="exportPL()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="printCpaPacket()">🖨 Paquete CPA</button></div></div>
   <div class="card" style="margin-bottom:16px"><div style="text-align:center;margin-bottom:18px"><div style="font-family:var(--serif);font-size:20px;font-weight:600">${escHtml(S.settings.companyName)}</div><div style="font-size:12px;color:var(--muted)">Estado de Resultados · Año Fiscal ${S.year} · Base de Efectivo</div></div>
   <table><tbody><tr class="pl-section"><td colspan="2">INGRESOS</td></tr>${revA.map(a=>{const v=sum(a.code);return v>0?`<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}</td><td style="text-align:right;color:#10b981">${fmt(v)}</td></tr>`:""}).join("")}<tr class="pl-total" style="color:#10b981"><td>TOTAL INGRESOS</td><td style="text-align:right">${fmt(tR)}</td></tr>
   <tr class="pl-section"><td colspan="2">GASTOS OPERATIVOS</td></tr>${expA.map(a=>{const v=sum(a.code);return v>0?`<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}</td><td style="text-align:right;color:#ef4444">(${fmt(v,true)})</td></tr>`:""}).join("")}<tr class="pl-total" style="color:#ef4444"><td>TOTAL GASTOS</td><td style="text-align:right">(${fmt(tE,true)})</td></tr>
@@ -731,7 +732,7 @@ function renderBalance(){
   const needsCarry=S.bankAccounts.some(a=>(a.openingDate||"9999")<`${S.year}-01-01`);
   const warn=(needsCarry&&priorYears.length&&!priorCount)?`<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.06)"><div style="font-size:12px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠️ Falta el historial de ${priorYears.join(", ")}</div><div style="font-size:11px;color:var(--muted);line-height:1.6">El saldo inicial de ${S.year} sale en $0.00 porque no hay transacciones cargadas en ${priorYears.join(", ")}. Importa ese año para que el arrastre sea correcto.</div></div>`:(needsCarry&&!priorYears.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.06)"><div style="font-size:12px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠️ Año anterior no registrado</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Tus cuentas abrieron antes de ${S.year}, pero no existe un año previo en la app. Agrégalo en Configuración → Años e importa su historial.</div></div>`:"");
   const row=e=>`<tr><td>${escHtml(e.name)}<br><span style="font-size:10px;color:var(--muted)">${escHtml(e.note||"")}</span></td><td style="text-align:right;font-weight:600">${fmt(e.amount)}</td><td>${e.auto?"":`<button onclick="removeBalanceEntry('${e.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`}</td></tr>`;
-  return`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Balance General</div><button class="btn btn-primary btn-sm" onclick="showModal('add-balance')">+ Agregar</button></div>${warn}
+  return`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Balance General</div><div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" onclick="exportBalanceCsv()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="showModal('add-balance')">+ Agregar</button></div></div>${warn}
   <div class="grid" style="margin-bottom:18px"><div class="card kpi"><div class="kpi-label">Total Activos</div><div class="kpi-val" style="color:#3b82f6">${fmt(tA)}</div><div class="kpi-sub">${bankAssets.length} auto + ${assetE.length} manual</div></div><div class="card kpi"><div class="kpi-label">Total Pasivos</div><div class="kpi-val" style="color:#8b5cf6">${fmt(tL)}</div><div class="kpi-sub">${bankLiabs.length} auto + ${liabE.length} manual</div></div><div class="card kpi"><div class="kpi-label">Patrimonio</div><div class="kpi-val" style="color:${eq>=0?'#10b981':'#ef4444'}">${fmt(eq)}</div><div class="kpi-sub">Utilidad ${S.year}: ${fmt(netInc)}</div></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap">
   <div class="card" style="flex:1;min-width:240px"><div class="section-title" style="color:#3b82f6">ACTIVOS</div><table><thead><tr><th>Descripción</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${allAssets.map(row).join("")}${!allAssets.length?`<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Sin activos</td></tr>`:""}</tbody></table><div style="border-top:1px solid var(--border);padding:10px;text-align:right;font-family:var(--serif);font-size:14px;font-weight:600;color:#3b82f6">Total: ${fmt(tA)}</div></div>
@@ -1072,7 +1073,7 @@ async function sendAiQuestion(msg){
   if(btn)btn.disabled=false;
 }
 async function clearAiChat(){S.aiMessages=[];await saveAiMessages();renderContent();}
-async function runMonthlyAnalysis(){goTab("ai");await sendAiQuestion(`Análisis completo ${S.year}: rendimiento por mes, gastos a controlar, proyección y 3 acciones prioritarias para mejorar rentabilidad.`);}
+
 
 function renderSettings(){
   return`<div style="max-width:640px;display:flex;flex-direction:column;gap:18px">
@@ -1204,10 +1205,154 @@ async function importCSV(){
   toast(`✅ ${fresh.length} importadas${dupes?` · ${dupes} duplicadas omitidas`:""}${skippedYear?` · ${skippedYear} de otros años omitidas`:""}`);
 }
 
+
+// ═══ Alertas fiscales, export CPA e informe mensual ═══
+function taxQuarters(){
+  return QUARTERS.map(q=>{
+    const inc=S.txns.filter(t=>t.amount>0&&q.months.includes(getTxMonth(t))).reduce((s,t)=>s+t.amount,0);
+    const ex=S.txns.filter(t=>t.amount<0&&q.months.includes(getTxMonth(t))).reduce((s,t)=>s+Math.abs(t.amount),0);
+    const n=inc-ex, se=n>0?n*.9235*.153:0, it=n>0?(n-se/2)*.10:0;
+    const due=q.label==="Q1"?`${S.year}-04-15`:q.label==="Q2"?`${S.year}-06-15`:q.label==="Q3"?`${S.year}-09-15`:`${S.year+1}-01-15`;
+    return{q:q.label,inc,exp:ex,net:n,se,it,tot:se+it,due};
+  });
+}
+function fiscalDeadlines(){
+  const d=taxQuarters().filter(q=>q.tot>0).map(q=>({fecha:q.due,evento:`Pago estimado ${q.q} (Form 1040-ES)`,monto:q.tot}));
+  d.push({fecha:`${S.year}-05-01`,evento:"Sunbiz Annual Report",monto:138.75});
+  d.push({fecha:`${S.year+1}-04-15`,evento:"Form 1040 + Schedule C",monto:0});
+  return d.sort((a,b)=>a.fecha.localeCompare(b.fecha));
+}
+function taxAlertBanner(){
+  if(S.alertDismissed===new Date().toISOString().slice(0,10))return "";
+  const hoy=new Date().toISOString().slice(0,10);
+  const ms=f=>Math.round((new Date(f+"T00:00:00")-new Date(hoy+"T00:00:00"))/86400000);
+  const prox=fiscalDeadlines().filter(x=>ms(x.fecha)>=-30&&ms(x.fecha)<=21);
+  if(!prox.length)return "";
+  return prox.map(x=>{
+    const d=ms(x.fecha);
+    const vencido=d<0, hoyMismo=d===0;
+    const col=vencido?"#ef4444":hoyMismo?"#ef4444":d<=7?"#f59e0b":"#3b82f6";
+    const txt=vencido?`VENCIDO hace ${Math.abs(d)} día${Math.abs(d)===1?"":"s"}`:hoyMismo?"VENCE HOY":`en ${d} día${d===1?"":"s"}`;
+    return`<div class="card" style="margin-bottom:12px;border-color:${col}55;background:${col}12;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span style="font-size:20px">${vencido||hoyMismo?"🚨":"📅"}</span>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:13px;font-weight:600;color:${col}">${escHtml(x.evento)} · ${txt}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Vence ${x.fecha}${x.monto>0?` · Monto estimado <strong>${fmt(x.monto)}</strong>`:""}</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="dismissAlert()">Ocultar hoy</button>
+    </div>`;
+  }).join("");
+}
+async function dismissAlert(){S.alertDismissed=new Date().toISOString().slice(0,10);await dbSet("alertDismissed",S.alertDismissed);renderContent();}
+
+function exportBalanceCsv(){
+  const entries=S.balanceEntries.filter(e=>e.year===S.year);
+  const bankAssets=S.bankAccounts.filter(a=>a.type!=="credit").map(a=>({name:a.name,amount:computeAccountBalance(a.id)}));
+  const bankLiabs=S.bankAccounts.filter(a=>a.type==="credit").map(a=>({name:a.name,amount:computeAccountBalance(a.id)})).filter(e=>Math.abs(e.amount)>0.005);
+  const A=[...bankAssets,...entries.filter(e=>e.type==="asset")];
+  const L=[...bankLiabs,...entries.filter(e=>e.type==="liability")];
+  const tA=A.reduce((s,e)=>s+e.amount,0),tL=L.reduce((s,e)=>s+e.amount,0);
+  let csv=`BALANCE GENERAL\n${S.settings.companyName}\nAño ${S.year}\n\nSección,Concepto,Monto\n`;
+  A.forEach(e=>csv+=`Activo,"${(e.name||"").replace(/"/g,'""')}",${e.amount.toFixed(2)}\n`);
+  csv+=`,TOTAL ACTIVOS,${tA.toFixed(2)}\n`;
+  L.forEach(e=>csv+=`Pasivo,"${(e.name||"").replace(/"/g,'""')}",${e.amount.toFixed(2)}\n`);
+  csv+=`,TOTAL PASIVOS,${tL.toFixed(2)}\n,CAPITAL (Activos - Pasivos),${(tA-tL).toFixed(2)}\n`;
+  downloadFile(`Balance_${S.year}.csv`,csv,"text/csv");
+  toast("✅ Balance exportado");
+}
+
+function printCpaPacket(){
+  const revA=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
+  const expA=S.coa.filter(c=>c.type==="expense"&&c.group!=="header");
+  const sum=code=>S.txns.filter(t=>t.coaCode===code).reduce((s,t)=>s+Math.abs(t.amount),0);
+  const tR=revA.reduce((s,a)=>s+sum(a.code),0),tE=expA.reduce((s,a)=>s+sum(a.code),0),net=tR-tE;
+  const entries=S.balanceEntries.filter(e=>e.year===S.year);
+  const bankAssets=S.bankAccounts.filter(a=>a.type!=="credit").map(a=>({name:a.name,amount:computeAccountBalance(a.id)}));
+  const bankLiabs=S.bankAccounts.filter(a=>a.type==="credit").map(a=>({name:a.name,amount:computeAccountBalance(a.id)})).filter(e=>Math.abs(e.amount)>0.005);
+  const A=[...bankAssets,...entries.filter(e=>e.type==="asset")],L=[...bankLiabs,...entries.filter(e=>e.type==="liability")];
+  const tA=A.reduce((s,e)=>s+e.amount,0),tL=L.reduce((s,e)=>s+e.amount,0);
+  const qs=taxQuarters();
+  const mes=[];for(let m=0;m<12;m++){
+    const mi=S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0);
+    const me=S.txns.filter(t=>t.kind!=="transfer"&&t.amount<0&&getTxMonth(t)===m).reduce((s,t)=>s+Math.abs(t.amount),0);
+    if(mi||me)mes.push({m:MONTHS[m],mi,me});
+  }
+  const sinCat=S.txns.filter(t=>t.kind!=="transfer"&&!t.coaCode).length;
+  const r=(l,v,b)=>`<tr${b?' class="b"':''}><td>${l}</td><td class="n">${fmt(v)}</td></tr>`;
+  const html=`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Paquete CPA ${S.year} · ${S.settings.companyName}</title>
+  <style>
+  @page{margin:18mm}
+  body{font:12px/1.5 Georgia,'Times New Roman',serif;color:#111;max-width:760px;margin:0 auto;padding:20px}
+  h1{font-size:20px;margin:0 0 2px} h2{font-size:14px;margin:26px 0 8px;border-bottom:1.5px solid #111;padding-bottom:4px;page-break-after:avoid}
+  .sub{color:#555;font-size:11px;margin-bottom:6px}
+  table{width:100%;border-collapse:collapse;margin-bottom:6px} td,th{padding:4px 6px;border-bottom:1px solid #ddd;font-size:11.5px}
+  th{text-align:left;background:#f2f2f2;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px}
+  .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tr.b td{font-weight:700;border-top:1.5px solid #111;border-bottom:none;background:#fafafa}
+  .note{font-size:10.5px;color:#555;margin-top:4px;line-height:1.6}
+  .foot{margin-top:28px;border-top:1px solid #ccc;padding-top:8px;font-size:10px;color:#666}
+  @media print{.noprint{display:none}}
+  </style></head><body>
+  <div class="noprint" style="background:#eef;border:1px solid #99c;padding:10px 14px;border-radius:6px;margin-bottom:18px;font-family:system-ui">
+    <strong>Para guardar como PDF:</strong> pulsa Imprimir y elige “Guardar como PDF”.
+    <button onclick="window.print()" style="margin-left:10px;padding:6px 14px;cursor:pointer">🖨 Imprimir / PDF</button>
+  </div>
+  <h1>${escHtml(S.settings.companyName)}</h1>
+  <div class="sub">${escHtml(S.settings.entity)} · ${escHtml(S.settings.state)} · Contabilidad base efectivo</div>
+  <div class="sub">Paquete de cierre · Año fiscal ${S.year} · Generado ${new Date().toISOString().slice(0,10)}</div>
+
+  <h2>1 · Estado de Resultados</h2>
+  <table><tr><th>Cuenta</th><th class="n">Monto</th></tr>
+  ${revA.map(a=>{const v=sum(a.code);return v>0?r(`${a.code} · ${escHtml(a.name)}`,v):""}).join("")}
+  ${r("TOTAL INGRESOS",tR,1)}
+  ${expA.map(a=>{const v=sum(a.code);return v>0?r(`${a.code} · ${escHtml(a.name)}`,-v):""}).join("")}
+  ${r("TOTAL GASTOS",-tE,1)}${r("UTILIDAD NETA",net,1)}
+  </table>
+  <div class="note">Margen neto: ${tR>0?((net/tR)*100).toFixed(1):"0.0"}% · ${S.txns.filter(t=>t.kind!=="transfer").length} transacciones operativas${sinCat?` · <strong>${sinCat} sin categorizar</strong>`:""}.</div>
+
+  <h2>2 · Balance General</h2>
+  <table><tr><th>Concepto</th><th class="n">Monto</th></tr>
+  ${A.map(e=>r(escHtml(e.name),e.amount)).join("")}${r("TOTAL ACTIVOS",tA,1)}
+  ${L.length?L.map(e=>r(escHtml(e.name),e.amount)).join(""):'<tr><td colspan="2" style="color:#777">Sin pasivos registrados</td></tr>'}${r("TOTAL PASIVOS",tL,1)}
+  ${r("CAPITAL DEL PROPIETARIO",tA-tL,1)}
+  </table>
+
+  <h2>3 · Resumen Mensual</h2>
+  <table><tr><th>Mes</th><th class="n">Ingresos</th><th class="n">Gastos</th><th class="n">Neto</th></tr>
+  ${mes.map(x=>`<tr><td>${x.m}</td><td class="n">${fmt(x.mi)}</td><td class="n">${fmt(x.me)}</td><td class="n">${fmt(x.mi-x.me)}</td></tr>`).join("")}
+  </table>
+
+  <h2>4 · Estimados Trimestrales (Form 1040-ES)</h2>
+  <table><tr><th>Trim.</th><th class="n">Ingresos</th><th class="n">Gastos</th><th class="n">Neto</th><th class="n">SE Tax</th><th class="n">Income Tax</th><th class="n">Total</th><th>Vence</th></tr>
+  ${qs.map(q=>`<tr><td>${q.q}</td><td class="n">${fmt(q.inc)}</td><td class="n">${fmt(q.exp)}</td><td class="n">${fmt(q.net)}</td><td class="n">${fmt(q.se)}</td><td class="n">${fmt(q.it)}</td><td class="n">${fmt(q.tot)}</td><td>${q.due}</td></tr>`).join("")}
+  </table>
+  <div class="note">SE Tax = 15.3% sobre 92.35% de la utilidad neta. Income Tax estimado al 10% tras deducir la mitad del SE Tax. Son estimados internos, no una declaración.</div>
+
+  <div class="foot">Generado por ContaFlow desde los registros contables de ${escHtml(S.settings.companyName)}.
+  Cifras en base de efectivo y sujetas a revisión profesional. Este documento no constituye asesoría fiscal ni sustituye la revisión de un CPA.</div>
+  </body></html>`;
+  const w=window.open("","_blank");
+  if(!w){toast("⚠️ Permite las ventanas emergentes para generar el paquete");return}
+  w.document.write(html);w.document.close();
+}
+
+async function runMonthlyAnalysis(){
+  goTab("ai");
+  const hoy=new Date(), mIdx=hoy.getMonth(), prev=mIdx===0?11:mIdx-1;
+  await sendAiQuestion(`Genera el CIERRE DE MES de ${MONTHS[prev]} ${S.year} con esta estructura:
+1. Resumen del mes (ingresos, gastos, neto) y comparación con el mes anterior.
+2. Qué proyecto aportó más y cuáles siguen sin facturar.
+3. Los 3 gastos que más pesaron y si alguno debe revisarse.
+4. Situación fiscal: próximo vencimiento y monto.
+5. Tres acciones concretas para el mes siguiente, en orden de prioridad.
+Usa solo cifras que estén en mi contexto. Si algún dato falta, dilo.`);
+}
+
 function renderContent(){
   const el=document.getElementById("content");
   const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,txns:renderTxns,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
-  el.innerHTML=(map[S.tab]||renderDashboard)();
+  const banner=(S.tab==="settings")?"":taxAlertBanner();
+  el.innerHTML=banner+(map[S.tab]||renderDashboard)();
 }
 
 async function bootApp(){
