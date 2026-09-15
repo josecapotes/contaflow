@@ -365,7 +365,7 @@ let S={
     {id:"m5446",name:"Mercury Savings ••5446",bank:"Mercury",type:"savings",last4:"5446",color:"#f59e0b",note:"Reserva Impuestos",openingBalance:0,openingDate:"2025-01-01"},
     {id:"mcredit",name:"Mercury Credit (Tarjeta)",bank:"Mercury",type:"credit",last4:"",color:"#8b5cf6",note:"Tarjeta de crédito empresarial — balance = deuda actual",openingBalance:0,openingDate:"2025-01-01"},
   ],
-  years:[2025],txns:[],allTxns:{},budget:{},balanceEntries:[],aiMessages:[],
+  years:[2025],txns:[],allTxns:{},budget:{},balanceEntries:[],aiMessages:[],projects:[],
   filterSearch:"",filterCode:"",filterSign:"",
 };
 
@@ -491,6 +491,7 @@ async function loadState(){
     const be=await dbGet("balanceEntries");if(be)S.balanceEntries=be;
     const ai=await dbGet("aiMessages");if(ai)S.aiMessages=ai;
     const ad=await dbGet("alertDismissed");if(ad)S.alertDismissed=ad;
+    const pj=await dbGet("projects");S.projects=(pj&&pj.length)?pj:PROJECTS.map(p=>({...p}));
     for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
     await loadYearTxns(S.year);
   }catch(e){console.warn(e)}
@@ -744,9 +745,9 @@ async function removeBalanceEntry(id){S.balanceEntries=S.balanceEntries.filter(e
 
 function renderProjects(){
   const txs=S.txns.filter(t=>t.kind!=="transfer"),tR=txs.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0),tE=txs.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
-  const cards=PROJECTS.map(p=>{const rev=txs.filter(t=>t.amount>0&&p.codes.includes(t.coaCode)).reduce((s,t)=>s+t.amount,0);const pct=tR>0?(rev/tR*100).toFixed(1):0;const net=rev-(tR>0?tE*(rev/tR):0);const cnt=txs.filter(t=>p.codes.includes(t.coaCode)).length;return`<div class="card" style="border-left:4px solid ${p.color};flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:20px">${p.icon}</span><div><div style="font-size:13px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${cnt} transacciones</div></div></div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:${p.color};margin-bottom:4px">${fmt(rev)}</div><div class="bar-wrap"><div class="bar-fill" style="background:${p.color};width:${pct}%"></div></div><div style="font-size:10px;color:var(--muted);margin-top:3px">${pct}% ingresos</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Utilidad est.: <strong style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</strong></div></div>`;}).join("");
-  const tRows=Array.from({length:12},(_,m)=>{const cols=PROJECTS.map(p=>{const v=txs.filter(t=>t.amount>0&&p.codes.includes(t.coaCode)&&getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0);return`<td style="text-align:right;color:${v>0?p.color:'var(--muted)'}">${v>0?fmt(v):"—"}</td>`;}).join("");return`<tr><td style="color:var(--muted)">${MONTHS[m]}</td>${cols}</tr>`;}).join("");
-  return`<div style="font-size:15px;font-weight:600;margin-bottom:14px">Reportes por Proyecto</div><div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px">${cards}</div><div class="card"><div class="section-title">Ingresos Mensuales por Proyecto</div><div style="overflow-x:auto"><table style="font-size:11px;min-width:500px"><thead><tr><th>Mes</th>${PROJECTS.map(p=>`<th style="text-align:right;color:${p.color}">${p.icon} ${p.name}</th>`).join("")}</tr></thead><tbody>${tRows}</tbody></table></div></div>`;
+  const cards=activeProjects().map(p=>{const rev=txs.filter(t=>t.amount>0&&p.codes.includes(t.coaCode)).reduce((s,t)=>s+t.amount,0);const pct=tR>0?(rev/tR*100).toFixed(1):0;const net=rev-(tR>0?tE*(rev/tR):0);const cnt=txs.filter(t=>p.codes.includes(t.coaCode)).length;return`<div class="card" style="border-left:4px solid ${p.color};flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:20px">${p.icon}</span><div><div style="font-size:13px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${cnt} transacciones</div></div></div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:${p.color};margin-bottom:4px">${fmt(rev)}</div><div class="bar-wrap"><div class="bar-fill" style="background:${p.color};width:${pct}%"></div></div><div style="font-size:10px;color:var(--muted);margin-top:3px">${pct}% ingresos</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Utilidad est.: <strong style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</strong></div></div>`;}).join("");
+  const tRows=Array.from({length:12},(_,m)=>{const cols=activeProjects().map(p=>{const v=txs.filter(t=>t.amount>0&&p.codes.includes(t.coaCode)&&getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0);return`<td style="text-align:right;color:${v>0?p.color:'var(--muted)'}">${v>0?fmt(v):"—"}</td>`;}).join("");return`<tr><td style="color:var(--muted)">${MONTHS[m]}</td>${cols}</tr>`;}).join("");
+  return`<div style="font-size:15px;font-weight:600;margin-bottom:14px">Reportes por Proyecto</div><div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px">${cards}</div><div class="card"><div class="section-title">Ingresos Mensuales por Proyecto</div><div style="overflow-x:auto"><table style="font-size:11px;min-width:500px"><thead><tr><th>Mes</th>${activeProjects().map(p=>`<th style="text-align:right;color:${p.color}">${p.icon} ${p.name}</th>`).join("")}</tr></thead><tbody>${tRows}</tbody></table></div></div>`;
 }
 
 function renderBudget(){
@@ -821,19 +822,6 @@ function renderTxns(){
 async function updateTxCoa(id,code){S.txns=S.txns.map(t=>t.id===id?{...t,coaCode:code}:t);await saveTxns();updateSidebar();}
 async function autoAll(){S.txns=S.txns.map(t=>t.kind==="transfer"?t:{...t,coaCode:autoCategory(t)});await saveTxns();renderContent();toast("✅ Auto-categorización completa")}
 async function deleteTx(id){S.txns=S.txns.filter(t=>t.id!==id);await saveTxns();renderContent();updateSidebar();}
-async function aiCategorizeTxns(){
-  const unc=S.txns.filter(t=>t.kind!=="transfer"&&(!t.coaCode||t.coaCode==="5900"||t.coaCode==="4090"));
-  if(!unc.length){toast("✅ Todas tienen categoría");return;}
-  const st=document.getElementById("ai-cat-status");if(st)st.textContent="🤖 Categorizando…";
-  try{
-    const coaCodes=S.coa.filter(c=>c.group!=="header").map(c=>`${c.code}:${c.name}`).join(", ");
-    const batch=unc.slice(0,30).map(t=>({id:t.id,desc:t.description,cp:t.counterparty,amt:t.amount}));
-    const resp=await callClaude(`Contador FL LLC (marketing, eCommerce beauty, bienes raíces, turismo religioso). Asigna código CoA. SOLO JSON:\n{"results":[{"id":"id","code":"XXXX"}]}\nCuentas: ${coaCodes}\nTxns: ${JSON.stringify(batch)}`);
-    const {results}=JSON.parse(resp.replace(/```json|```/g,"").trim());
-    let cnt=0;S.txns=S.txns.map(t=>{const m=results.find(r=>r.id===t.id);if(m?.code){cnt++;return{...t,coaCode:m.code,aiCategorized:true}}return t;});
-    await saveTxns();renderContent();updateSidebar();toast(`✅ IA categorizó ${cnt} transacciones`);
-  }catch(e){toast("❌ "+e.message);if(st)st.textContent="";}
-}
 
 // ═══ CONCILIACIÓN BANCARIA ═══
 let RECON={rows:[],matched:[],missing:[],unbacked:[],analyzed:false,accountId:""};
@@ -1010,7 +998,7 @@ function buildAiContext(){
 
   // Proyectos con ingresos mensuales
   L.push(``);L.push(`== INGRESOS POR PROYECTO ==`);
-  PROJECTS.forEach(p=>{
+  activeProjects().forEach(p=>{
     const pr=op.filter(t=>t.amount>0&&p.codes.includes(t.coaCode));
     const tot=pr.reduce((s,t)=>s+t.amount,0);
     const cnt=op.filter(t=>p.codes.includes(t.coaCode)).length;
@@ -1080,6 +1068,7 @@ function renderSettings(){
   <div class="card"><div class="section-title">🏢 Empresa</div><div class="input-row"><div style="flex:1"><label>Nombre</label><input id="s-company" value="${escHtml(S.settings.companyName)}" style="width:100%"></div></div><div class="input-row"><div style="flex:1"><label>Estado</label><input id="s-state" value="${escHtml(S.settings.state)}" style="width:100%"></div><div style="flex:1"><label>Entidad</label><input id="s-entity" value="${escHtml(S.settings.entity)}" style="width:100%"></div></div><button class="btn btn-primary btn-sm" onclick="saveSettingsForm()">Guardar</button></div>
   <div class="card"><div class="section-title">🤖 Anthropic API Key (para IA)</div><p style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">Obtén tu key en <strong>console.anthropic.com → API Keys</strong>. Se guarda solo en este dispositivo.</p><div class="input-row"><div style="flex:1"><label>API Key</label><input id="s-anthropic" type="password" value="${escHtml(S.settings.anthropicApiKey||"")}" placeholder="sk-ant-xxxxxxxxxxxxxxxx" style="width:100%;font-family:monospace"></div></div><button class="btn btn-purple btn-sm" onclick="saveAnthropicKey()">Guardar API Key IA</button></div>
   <div class="card"><div class="section-title">🔑 Conexión con Mercury Bank</div><p style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.7">Tu token de Mercury vive <strong>de forma segura</strong> en el servidor proxy (Cloudflare Worker), nunca en este navegador ni en la nube de datos. La sincronización usa tu sesión para autenticarte.</p><div style="font-size:11px;padding:8px 10px;border-radius:6px;background:${(sb&&USER)?'rgba(16,185,129,.1)':'rgba(245,158,11,.1)'};color:${(sb&&USER)?'#10b981':'#f59e0b'}">${(sb&&USER)?'✅ Conectado — usa el botón 🔄 Sincronizar (arriba) para traer tus transacciones del año seleccionado':'⚠️ Inicia sesión para poder sincronizar con Mercury'}</div><div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.6">💡 La sincronización <strong>fusiona</strong>: trae lo de Mercury sin borrar tus entradas manuales, importaciones CSV ni conciliaciones. Empareja cuentas por los últimos 4 dígitos.</div></div>
+  ${renderProjectSettings()}
   <div class="card"><div class="section-title">📅 Años Fiscales</div><div style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><input id="new-year" type="number" placeholder="2026" style="width:120px" min="2020" max="2099"><button class="btn btn-primary btn-sm" onclick="addYear()">+ Agregar</button></div><div style="display:flex;gap:8px;flex-wrap:wrap">${S.years.map(y=>`<div style="display:flex;align-items:center;gap:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:6px 12px"><span style="font-family:var(--serif);font-size:15px;color:#3b82f6;font-weight:600">${y}</span><button onclick="removeYear(${y})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px">🗑</button></div>`).join("")}</div></div>
   <div class="card" style="border-color:rgba(16,185,129,.3)"><div class="section-title">💾 Exportar / Importar</div><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#6ee7b7;line-height:1.7">⚠️ Exporta antes de actualizar en Netlify. El backup incluye TODOS los años.</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="exportAllData()">⬇️ Exportar JSON (todos los años)</button><button class="btn btn-ghost btn-sm" onclick="exportTxns()">⬇️ CSV ${S.year}</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-json')">⬆️ Importar JSON</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-csv')">⬆️ Importar CSV Mercury</button></div></div>
 <div class="card" style="margin-bottom:14px"><div class="section-title">☁️ Sesión y Sincronización</div>${USER?`<div style="font-size:12px;margin-bottom:4px">Conectado como <strong>${escHtml(USER.email||"")}</strong></div><div style="font-size:11px;color:#10b981;margin-bottom:12px">✅ Sincronizando con la nube — tus datos están en todos tus dispositivos</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="showModal('migrate')">☁️ Subir datos locales a la nube</button><button class="btn btn-ghost btn-sm" onclick="authLogout()">🚪 Cerrar sesión</button></div>`:`<div style="font-size:12px;color:#f59e0b;margin-bottom:6px">${OFFLINE?"📴 Modo local (sin conexión)":"⚠️ Sin configurar Supabase"}</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Los datos se guardan solo en este navegador y <strong>no</strong> se sincronizan con el móvil. ${OFFLINE?'<a href="#" onclick="location.reload();return false" style="color:#3b82f6">Reconectar</a>':""}</div>`}</div>
@@ -1346,6 +1335,271 @@ async function runMonthlyAnalysis(){
 4. Situación fiscal: próximo vencimiento y monto.
 5. Tres acciones concretas para el mes siguiente, en orden de prioridad.
 Usa solo cifras que estén en mi contexto. Si algún dato falta, dilo.`);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CATEGORIZACIÓN IA CON REVISIÓN  +  GESTIÓN DE PROYECTOS
+// ═══════════════════════════════════════════════════════════
+
+// --- Parseo tolerante: el modelo a veces envuelve el JSON en texto ---
+function parseJsonLoose(raw){
+  let s=String(raw||"").replace(/```(?:json)?/gi,"").trim();
+  const a=s.indexOf("{"), b=s.lastIndexOf("}");
+  if(a>-1&&b>a)s=s.slice(a,b+1);
+  return JSON.parse(s);
+}
+
+let AICAT={props:[],pend:0};
+
+async function aiCategorizeTxns(incluirGenericas=false){
+  const vacias=S.txns.filter(t=>t.kind!=="transfer"&&!t.coaCode);
+  const genericas=S.txns.filter(t=>t.kind!=="transfer"&&(t.coaCode==="5900"||t.coaCode==="4090"));
+  const unc=incluirGenericas?[...vacias,...genericas]:vacias;
+
+  if(!unc.length){
+    if(!incluirGenericas&&genericas.length){
+      if(confirm(`No hay transacciones sin categoría.\n\n¿Quieres que la IA revise las ${genericas.length} que están en cuentas genéricas (5900 Gastos Varios / 4090 Otros Ingresos) y proponga algo más preciso?`))
+        return aiCategorizeTxns(true);
+      return;
+    }
+    toast("✅ Todas tienen categoría");return;
+  }
+
+  const st=document.getElementById("ai-cat-status");
+  const lc=S.coa.filter(c=>c.group!=="header");
+  const validos=new Set(lc.map(c=>c.code));
+  const coaCodes=lc.map(c=>`${c.code}:${c.name} (${c.type})`).join(", ");
+
+  const LOTE=25, props=[], errores=[];
+  try{
+    for(let i=0;i<unc.length;i+=LOTE){
+      const lote=unc.slice(i,i+LOTE);
+      if(st)st.innerHTML=`<span style="color:var(--gold)">🤖 Analizando ${Math.min(i+LOTE,unc.length)} de ${unc.length}…</span>`;
+      const batch=lote.map(t=>({id:t.id,fecha:t.date,desc:(t.description||"").slice(0,90),cp:(t.counterparty||"").slice(0,50),cat_banco:t.mercuryCategory||"",monto:t.amount}));
+      const prompt=`Eres contador de ${S.settings.companyName} (${S.settings.entity}, ${S.settings.state}). La empresa hace marketing digital con GoHighLevel, eCommerce de equipos de estética, bienes raíces y servicios digitales a instituciones.
+
+Asigna a cada transacción el código de cuenta contable más preciso de la lista. Reglas:
+- Montos negativos son gastos; positivos son ingresos. No asignes una cuenta de tipo expense a un monto positivo ni al revés.
+- Usa SOLO códigos de la lista. Si ninguno encaja bien, usa el más genérico que aplique y pon confianza "baja".
+- confianza: "alta" si el nombre del proveedor lo deja claro; "media" si lo deduces; "baja" si estás adivinando.
+- razon: máximo 8 palabras, en español.
+
+CUENTAS DISPONIBLES: ${coaCodes}
+
+TRANSACCIONES: ${JSON.stringify(batch)}
+
+Responde SOLO este JSON, sin texto antes ni después:
+{"results":[{"id":"...","code":"XXXX","confianza":"alta|media|baja","razon":"..."}]}`;
+
+      const resp=await callClaudeWithSystem("Responde únicamente con JSON válido.",[{role:"user",content:prompt}]);
+      let results=[];
+      try{ results=(parseJsonLoose(resp).results)||[]; }
+      catch(e){ errores.push(`Lote ${Math.floor(i/LOTE)+1}: respuesta ilegible`); continue; }
+
+      results.forEach(r=>{
+        const t=lote.find(x=>x.id===r.id);
+        if(!t)return;
+        if(!validos.has(r.code)){ errores.push(`${(t.description||"").slice(0,28)}: código ${r.code} no existe en tu plan`); return; }
+        const cuenta=lc.find(c=>c.code===r.code);
+        const signoMal=(cuenta.type==="expense"&&t.amount>0)||(cuenta.type==="revenue"&&t.amount<0);
+        props.push({
+          id:t.id, date:t.date, desc:t.description||"", cp:t.counterparty||"", amount:t.amount,
+          actual:t.coaCode||"", code:r.code,
+          conf:signoMal?"baja":(["alta","media","baja"].includes(r.confianza)?r.confianza:"media"),
+          razon:signoMal?"⚠ signo incompatible — revisa":(r.razon||""),
+          ok:!signoMal
+        });
+      });
+    }
+  }catch(e){
+    if(st)st.textContent="";
+    toast("❌ "+e.message);
+    return;
+  }
+
+  if(st)st.textContent="";
+  if(!props.length){ toast("⚠️ La IA no devolvió propuestas utilizables"); return; }
+  AICAT={props,errores,total:unc.length};
+  showAiCatReview();
+}
+
+function showAiCatReview(){
+  const lc=S.coa.filter(c=>c.group!=="header");
+  const P=AICAT.props;
+  const chip=c=>{
+    const col=c==="alta"?"#10b981":c==="media"?"#f59e0b":"#ef4444";
+    return `<span style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:${col};background:${col}1a;padding:2px 6px;border-radius:3px;white-space:nowrap">${c}</span>`;
+  };
+  const filas=P.map((p,i)=>`<tr>
+    <td style="padding:7px 6px"><input type="checkbox" id="aic-${i}" ${p.ok?"checked":""}></td>
+    <td style="padding:7px 6px;font-size:10.5px;color:var(--muted);white-space:nowrap">${fmtDateFull(p.date)}</td>
+    <td style="padding:7px 6px;max-width:190px"><div style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.desc)}</div>${p.actual?`<div style="font-size:9.5px;color:var(--muted)">antes: ${escHtml(p.actual)}</div>`:""}</td>
+    <td style="padding:7px 6px;text-align:right;font-size:11.5px;white-space:nowrap;color:${p.amount<0?"#ef4444":"#10b981"}">${fmt(p.amount)}</td>
+    <td style="padding:7px 6px"><select id="aics-${i}" style="font-size:11px;max-width:190px">${lc.map(c=>`<option value="${c.code}" ${c.code===p.code?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("")}</select></td>
+    <td style="padding:7px 6px">${chip(p.conf)}<div style="font-size:9.5px;color:var(--muted);margin-top:3px;max-width:150px">${escHtml(p.razon)}</div></td>
+  </tr>`).join("");
+
+  const nAlta=P.filter(p=>p.conf==="alta").length, nBaja=P.filter(p=>p.conf==="baja").length;
+  const errHtml=(AICAT.errores&&AICAT.errores.length)?`<div style="font-size:10.5px;color:#f59e0b;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.6">⚠️ ${AICAT.errores.length} descartada(s): ${AICAT.errores.slice(0,3).map(escHtml).join(" · ")}${AICAT.errores.length>3?"…":""}</div>`:"";
+
+  const html=`<div class="modal" style="max-width:900px;width:96vw">
+    <div class="modal-title">🤖 Revisa antes de aplicar</div>
+    <p style="font-size:12px;color:var(--muted);line-height:1.65;margin-bottom:12px">
+      La IA propone categoría para <strong>${P.length}</strong> de ${AICAT.total} transacciones — ${nAlta} con confianza alta${nBaja?`, <strong style="color:#ef4444">${nBaja} con confianza baja</strong>`:""}.
+      Desmarca lo que no quieras, corrige con el desplegable, y aplica. <strong>Nada se guarda hasta que pulses Aplicar.</strong>
+    </p>
+    ${errHtml}
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="btn btn-ghost btn-sm" onclick="aicToggleAll(true)">Marcar todas</button>
+      <button class="btn btn-ghost btn-sm" onclick="aicToggleAll(false)">Desmarcar todas</button>
+      <button class="btn btn-ghost btn-sm" onclick="aicToggleConf('alta')">Solo confianza alta</button>
+    </div>
+    <div style="overflow:auto;max-height:52vh;border:1px solid var(--border);border-radius:8px">
+      <table style="font-size:11px;width:100%;min-width:660px">
+        <thead><tr>
+          <th style="width:30px"></th><th>Fecha</th><th>Descripción</th>
+          <th style="text-align:right">Monto</th><th>Categoría propuesta</th><th>Confianza</th>
+        </tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="applyAiCat()">Aplicar seleccionadas</button>
+    </div>
+  </div>`;
+  const bg=document.createElement("div");bg.className="modal-bg";bg.id="active-modal";bg.innerHTML=html;
+  bg.addEventListener("click",e=>{if(e.target===bg)closeModal()});
+  document.getElementById("modal-container").appendChild(bg);
+}
+
+function aicToggleAll(v){AICAT.props.forEach((p,i)=>{const el=document.getElementById(`aic-${i}`);if(el)el.checked=v});}
+function aicToggleConf(c){AICAT.props.forEach((p,i)=>{const el=document.getElementById(`aic-${i}`);if(el)el.checked=(p.conf===c);});}
+
+async function applyAiCat(){
+  const cambios=[];
+  AICAT.props.forEach((p,i)=>{
+    const chk=document.getElementById(`aic-${i}`), sel=document.getElementById(`aics-${i}`);
+    if(chk&&chk.checked&&sel)cambios.push({id:p.id,code:sel.value});
+  });
+  if(!cambios.length){toast("⚠️ No seleccionaste ninguna");return;}
+  S.txns=S.txns.map(t=>{
+    const c=cambios.find(x=>x.id===t.id);
+    return c?{...t,coaCode:c.code,aiCategorized:true}:t;
+  });
+  await saveTxns();closeModal();renderContent();updateSidebar();
+  toast(`✅ ${cambios.length} categorizadas · revisa el P&L`);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PROYECTOS EDITABLES
+// ═══════════════════════════════════════════════════════════
+
+function projectTxnCount(p){return S.txns.filter(t=>p.codes.includes(t.coaCode)).length}
+function projectRevenue(p){return S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&p.codes.includes(t.coaCode)).reduce((s,t)=>s+t.amount,0)}
+
+// Los proyectos que entran en reportes y en el contexto de la IA
+function activeProjects(){
+  let list=(S.projects&&S.projects.length?S.projects:PROJECTS).filter(p=>!p.hidden);
+  if(S.settings.hideEmptyProjects)list=list.filter(p=>projectTxnCount(p)>0);
+  return list;
+}
+async function saveProjects(){await dbSet("projects",S.projects)}
+
+function renderProjectSettings(){
+  const list=(S.projects&&S.projects.length?S.projects:PROJECTS);
+  const vacios=list.filter(p=>projectTxnCount(p)===0).length;
+  const rows=list.map((p,i)=>{
+    const n=projectTxnCount(p), rev=projectRevenue(p);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(31,41,55,.4)">
+      <span style="font-size:17px;width:24px;text-align:center">${escHtml(p.icon||"📁")}</span>
+      <span style="width:4px;height:26px;border-radius:2px;background:${escHtml(p.color||"#6b7280")};flex-shrink:0"></span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;font-weight:600;${p.hidden?"opacity:.45":""}">${escHtml(p.name)}${p.hidden?" · oculto":""}</div>
+        <div style="font-size:10px;color:var(--muted)">Cuentas ${p.codes.join(", ")||"—"} · ${n} txns · ${fmt(rev)}</div>
+      </div>
+      ${n===0?'<span style="font-size:9px;color:#f59e0b;background:rgba(245,158,11,.12);padding:2px 6px;border-radius:3px;white-space:nowrap">sin movimiento</span>':""}
+      <button class="btn btn-ghost btn-sm" onclick="toggleProjectHidden(${i})" title="${p.hidden?"Mostrar":"Ocultar"}">${p.hidden?"👁":"🚫"}</button>
+      <button class="btn btn-ghost btn-sm" onclick="showProjectModal(${i})">✏️</button>
+      <button class="btn btn-ghost btn-sm" onclick="removeProject(${i})">🗑</button>
+    </div>`;
+  }).join("");
+
+  return `<div class="card"><div class="section-title">📁 Proyectos</div>
+    <p style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:10px">Un proyecto agrupa una o más cuentas de ingreso. Aparece en el reporte de Proyectos y en el contexto que recibe el Asistente IA.</p>
+    <div style="margin-bottom:12px">${rows||'<div style="font-size:11px;color:var(--muted)">Sin proyectos</div>'}</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);margin-bottom:12px;cursor:pointer">
+      <input type="checkbox" id="s-hide-empty" ${S.settings.hideEmptyProjects?"checked":""} onchange="toggleHideEmpty(this.checked)">
+      Ocultar de los reportes los proyectos sin movimiento${vacios?` (${vacios} ahora mismo)`:""}
+    </label>
+    <button class="btn btn-primary btn-sm" onclick="showProjectModal(-1)">+ Nuevo proyecto</button>
+  </div>`;
+}
+
+function showProjectModal(idx){
+  if(!S.projects||!S.projects.length)S.projects=PROJECTS.map(p=>({...p}));
+  const p=idx>=0?S.projects[idx]:{id:`p_${Date.now()}`,name:"",icon:"📁",color:"#3b82f6",codes:[]};
+  const rev=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
+  const html=`<div class="modal">
+    <div class="modal-title">${idx>=0?"Editar proyecto":"Nuevo proyecto"}</div>
+    <div class="input-row">
+      <div style="flex:2"><label>Nombre *</label><input id="p-name" style="width:100%" value="${escHtml(p.name)}" placeholder="Ej: Marketing & GHL"></div>
+      <div><label>Icono</label><input id="p-icon" style="width:62px;text-align:center" value="${escHtml(p.icon||"📁")}" maxlength="2"></div>
+      <div><label>Color</label><input type="color" id="p-color" value="${escHtml(p.color||"#3b82f6")}" style="width:44px;height:34px;padding:2px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer"></div>
+    </div>
+    <label style="margin-top:6px">Cuentas de ingreso que pertenecen a este proyecto *</label>
+    <div style="max-height:190px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:8px;margin-top:4px">
+      ${rev.length?rev.map(c=>`<label style="display:flex;align-items:center;gap:8px;font-size:11.5px;padding:4px 2px;cursor:pointer">
+        <input type="checkbox" class="p-code" value="${c.code}" ${p.codes.includes(c.code)?"checked":""}>
+        <span>${c.code} – ${escHtml(c.name)}</span></label>`).join("")
+      :'<div style="font-size:11px;color:#f59e0b">No tienes cuentas de tipo "revenue" en tu Plan de Cuentas. Créalas primero en Plan Cuentas.</div>'}
+    </div>
+    <div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.6">💡 Una cuenta puede estar en un solo proyecto. Si la asignas aquí y ya estaba en otro, revisa el otro para no duplicar ingresos.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveProjectForm(${idx})">Guardar</button>
+    </div>
+  </div>`;
+  const bg=document.createElement("div");bg.className="modal-bg";bg.id="active-modal";bg.innerHTML=html;
+  bg.addEventListener("click",e=>{if(e.target===bg)closeModal()});
+  document.getElementById("modal-container").appendChild(bg);
+}
+
+async function saveProjectForm(idx){
+  const name=document.getElementById("p-name").value.trim();
+  const codes=[...document.querySelectorAll(".p-code:checked")].map(e=>e.value);
+  if(!name)return toast("⚠️ Ponle un nombre");
+  if(!codes.length)return toast("⚠️ Marca al menos una cuenta de ingreso");
+  const obj={
+    id:idx>=0?S.projects[idx].id:`p_${Date.now()}`,
+    name, icon:document.getElementById("p-icon").value||"📁",
+    color:document.getElementById("p-color").value, codes,
+    hidden:idx>=0?!!S.projects[idx].hidden:false
+  };
+  if(idx>=0)S.projects[idx]=obj; else S.projects=[...S.projects,obj];
+  await saveProjects();closeModal();renderContent();toast("✅ Proyecto guardado");
+}
+
+async function toggleProjectHidden(idx){
+  if(!S.projects||!S.projects.length)S.projects=PROJECTS.map(p=>({...p}));
+  S.projects[idx]={...S.projects[idx],hidden:!S.projects[idx].hidden};
+  await saveProjects();renderContent();
+  toast(S.projects[idx].hidden?"🚫 Proyecto oculto":"👁 Proyecto visible");
+}
+
+async function removeProject(idx){
+  if(!S.projects||!S.projects.length)S.projects=PROJECTS.map(p=>({...p}));
+  const p=S.projects[idx], n=projectTxnCount(p);
+  const msg=n>0
+    ? `"${p.name}" tiene ${n} transacciones asociadas.\n\nBorrar el proyecto NO borra transacciones — solo deja de agruparlas en el reporte. Si solo quieres que no aparezca, usa Ocultar (🚫) en vez de borrar.\n\n¿Borrar el proyecto?`
+    : `¿Borrar el proyecto "${p.name}"? No tiene transacciones asociadas.`;
+  if(!confirm(msg))return;
+  S.projects=S.projects.filter((_,i)=>i!==idx);
+  await saveProjects();renderContent();toast("✅ Proyecto eliminado");
+}
+
+async function toggleHideEmpty(v){
+  S.settings.hideEmptyProjects=v;await saveSettings();renderContent();
 }
 
 function renderContent(){
