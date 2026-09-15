@@ -983,21 +983,92 @@ function renderAI(){
   <div style="display:flex;gap:8px;margin-top:10px;padding-top:12px;border-top:1px solid var(--border)"><input id="ai-input" placeholder="Pregunta sobre tus finanzas…" style="flex:1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiMessage()}"><button class="btn btn-purple" onclick="sendAiMessage()" id="ai-send-btn">Enviar</button></div></div>`;
 }
 async function sendAiMessage(){const inp=document.getElementById("ai-input");if(!inp)return;const msg=inp.value.trim();if(!msg)return;inp.value="";await sendAiQuestion(msg);}
+// ---- Contexto financiero real para el CFO IA ----
+function buildAiContext(){
+  const L=[];
+  const today=new Date(), iso=today.toISOString().slice(0,10);
+  const op=S.txns.filter(t=>t.kind!=="transfer");
+  const rev=op.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
+  const exp=op.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
+  const net=rev-exp;
+
+  L.push(`Eres el CFO digital de José Capote para ${S.settings.companyName} (${S.settings.entity}, ${S.settings.state}).`);
+  L.push(`FECHA DE HOY: ${iso}. AÑO FISCAL EN PANTALLA: ${S.year}.`);
+  L.push(``);
+  L.push(`== RESUMEN ${S.year} ==`);
+  L.push(`Ingresos ${fmt(rev)} | Gastos ${fmt(exp)} | Utilidad ${fmt(net)} | Margen ${rev>0?((net/rev)*100).toFixed(1):"0"}% | ${op.length} transacciones operativas`);
+
+  // Mes a mes
+  const mRows=[];
+  for(let m=0;m<12;m++){
+    const mi=op.filter(t=>t.amount>0&&getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0);
+    const me=op.filter(t=>t.amount<0&&getTxMonth(t)===m).reduce((s,t)=>s+Math.abs(t.amount),0);
+    if(mi||me) mRows.push(`${MONTHS[m]}: ing ${fmt(mi)} / gas ${fmt(me)} / neto ${fmt(mi-me)}`);
+  }
+  if(mRows.length){L.push(``);L.push(`== MES A MES ==`);L.push(mRows.join(" | "));}
+
+  // Proyectos con ingresos mensuales
+  L.push(``);L.push(`== INGRESOS POR PROYECTO ==`);
+  PROJECTS.forEach(p=>{
+    const pr=op.filter(t=>t.amount>0&&p.codes.includes(t.coaCode));
+    const tot=pr.reduce((s,t)=>s+t.amount,0);
+    const cnt=op.filter(t=>p.codes.includes(t.coaCode)).length;
+    const porMes=[];
+    for(let m=0;m<12;m++){const v=pr.filter(t=>getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0);if(v>0)porMes.push(`${MONTHS[m]} ${fmt(v)}`);}
+    L.push(`${p.name}: ${fmt(tot)} (${cnt} txns)${porMes.length?" -> "+porMes.join(", "):" -> sin ingresos"}`);
+  });
+
+  // Gastos por categoría
+  const byCat={};
+  op.filter(t=>t.amount<0).forEach(t=>{const k=t.coaCode||"5900";byCat[k]=(byCat[k]||0)+Math.abs(t.amount)});
+  const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  if(cats.length){L.push(``);L.push(`== TOP GASTOS POR CATEGORÍA ==`);
+    cats.forEach(([c,v])=>L.push(`${catName(c)}: ${fmt(v)} (${exp>0?((v/exp)*100).toFixed(1):0}% del gasto)`));}
+
+  // Cuentas bancarias
+  if(S.bankAccounts&&S.bankAccounts.length){
+    L.push(``);L.push(`== CUENTAS ==`);
+    S.bankAccounts.forEach(a=>{
+      const mov=S.txns.filter(t=>t.accountId===a.id).reduce((s,t)=>s+t.amount,0);
+      L.push(`${a.name}${a.last4?" ("+a.last4+")":""} [${a.type||"-"}]: movimiento neto ${S.year} ${fmt(mov)}`);
+    });
+  }
+
+  // Trimestres e impuestos
+  const qs=QUARTERS.map(q=>{
+    const inc=S.txns.filter(t=>t.amount>0&&q.months.includes(getTxMonth(t))).reduce((s,t)=>s+t.amount,0);
+    const ex=S.txns.filter(t=>t.amount<0&&q.months.includes(getTxMonth(t))).reduce((s,t)=>s+Math.abs(t.amount),0);
+    const n=inc-ex, se=n>0?n*.9235*.153:0, it=n>0?(n-se/2)*.10:0;
+    const due=q.label==="Q1"?`${S.year}-04-15`:q.label==="Q2"?`${S.year}-06-15`:q.label==="Q3"?`${S.year}-09-15`:`${S.year+1}-01-15`;
+    return{q:q.label,n,tot:se+it,due};
+  });
+  L.push(``);L.push(`== IMPUESTOS ESTIMADOS (Form 1040-ES) ==`);
+  qs.forEach(q=>L.push(`${q.q}: neto ${fmt(q.n)} -> pago estimado ${fmt(q.tot)} (vence ${q.due})`));
+  const next=qs.find(q=>q.due>=iso);
+  if(next)L.push(`PRÓXIMO VENCIMIENTO: ${next.q} el ${next.due} por ${fmt(next.tot)}.`);
+  L.push(`Otras fechas: Sunbiz Annual Report ${S.year}-05-01 ($138.75).`);
+
+  L.push(``);
+  L.push(`== REGLAS ==`);
+  L.push(`- Estos datos vienen de la contabilidad real del usuario en esta app. Úsalos. NUNCA digas que no tienes acceso a sus registros.`);
+  L.push(`- Si una cifra no está arriba, dilo claramente en vez de inventarla o estimarla sin avisar.`);
+  L.push(`- Responde en español, directo y práctico. Usa markdown y tablas cuando ayuden.`);
+  L.push(`- Máximo 350 palabras salvo que se te pida un informe largo.`);
+  L.push(`- No eres CPA: para decisiones fiscales finales recuerda consultar al contador.`);
+  return L.join("\n");
+}
+
 async function sendAiQuestion(msg){
-  S.aiMessages.push({role:"user",content:msg});renderContent();
+  S.aiMessages.push({role:"user",content:msg});await saveAiMessages();renderContent();
   setTimeout(()=>{const el=document.getElementById("ai-chat-messages");if(el)el.scrollTop=el.scrollHeight},50);
   const btn=document.getElementById("ai-send-btn");if(btn)btn.disabled=true;
-  const opTxns=S.txns.filter(t=>t.kind!=="transfer");
-  const rev=opTxns.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
-  const exp=opTxns.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0),net=rev-exp;
-  const topExp={};opTxns.filter(t=>t.amount<0).forEach(t=>{const k=t.coaCode||"5900";topExp[k]=(topExp[k]||0)+Math.abs(t.amount)});
-  const sys=`Eres el CFO de José Capote para ${S.settings.companyName} (${S.settings.entity}, ${S.settings.state}).\nAño: ${S.year} | Ingresos: ${fmt(rev)} | Gastos: ${fmt(exp)} | Utilidad: ${fmt(net)} | Margen: ${rev>0?((net/rev)*100).toFixed(1):0}%\nTop gastos: ${Object.entries(topExp).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([c,v])=>`${catName(c)}: ${fmt(v)}`).join(", ")}\nProyectos: Catedral, Genova eCommerce, Marketing GHL, Bienes Raíces FL.\nFlorida LLC Pass-Through. Responde en español, directo y práctico. Máx 200 palabras.`;
+  const sys=buildAiContext();
   try{
-    const history=S.aiMessages.slice(-8).map(m=>({role:m.role==="ai"?"assistant":"user",content:m.content}));
+    const history=S.aiMessages.slice(-20).filter(m=>!String(m.content).startsWith("❌")).map(m=>({role:m.role==="ai"?"assistant":"user",content:m.content}));
     const resp=await callClaudeWithSystem(sys,history);
     S.aiMessages.push({role:"ai",content:resp});await saveAiMessages();renderContent();
     setTimeout(()=>{const el=document.getElementById("ai-chat-messages");if(el)el.scrollTop=el.scrollHeight},50);
-  }catch(e){S.aiMessages.push({role:"ai",content:`❌ ${e.message}`});renderContent();}
+  }catch(e){S.aiMessages.push({role:"ai",content:`❌ ${e.message}`});await saveAiMessages();renderContent();}
   if(btn)btn.disabled=false;
 }
 async function clearAiChat(){S.aiMessages=[];await saveAiMessages();renderContent();}
@@ -1041,7 +1112,7 @@ async function callClaude(prompt){
   const d=await r.json();return d.content.map(b=>b.text||"").join("");
 }
 async function callClaudeWithSystem(system,messages){
-  const r=await fetch(PROXY_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:ANTHROPIC_MODEL,max_tokens:1000,system,messages})});
+  const r=await fetch(PROXY_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:ANTHROPIC_MODEL,max_tokens:4000,system,messages})});
   if(!r.ok){let detail="";try{const err=await r.json();detail=err?.error?.message||JSON.stringify(err).slice(0,120)}catch{};throw new Error(`API ${r.status}${detail?": "+detail:""}`)}
   const d=await r.json();return d.content.map(b=>b.text||"").join("");
 }
