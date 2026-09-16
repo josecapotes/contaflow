@@ -319,7 +319,7 @@ const AUTO_RULES=[
   {re:/intl.*fee|international.*fee/i,code:"5700"},
 ];
 const AUTO_INCOME=[
-  {re:/cashback/i,code:"4100"},
+  {re:/cashback/i,code:"4100",sinFactura:1},
   {re:/catedral|cathedral|iglesia/i,code:"4010"},
   {re:/genova|beauty/i,code:"4020"},
 ];
@@ -356,7 +356,7 @@ const INCOME_PR=[
   {re:/stripe/i,code:"4020"},
   {re:/paypal/i,code:"4020"},
   {re:/ath movil|ath deposit|deposito|dep[oó]sito|cheque/i,code:"4010"},
-  {re:/cashback|interes|interest/i,code:"4100"},
+  {re:/cashback|interes|interest/i,code:"4100",sinFactura:1},   // nunca lleva factura
 ];
 const XFER_PR=[/su\s+telepago/i,/pago\s+recibido/i,/payment\s*-?\s*thank\s*you/i,/telepago\s+transferencia/i,/telepago\s+visa\s+banco\s+popular/i,/transferencia\s+a\s+cuenta/i,/transferencia\s+de\s+fondos/i];
 const REVERSO_RE=/devuelto|devoluci[oó]n|reclamaci[oó]n|recovery|reversal|revers[oa]/i;
@@ -369,6 +369,19 @@ function esTransferencia(desc){
 function autoCategory(tx){
   const t=`${tx.description||''} ${tx.counterparty||''}`.toLowerCase();
   const pr=perfilPR();
+  // En base de factura un ingreso del banco es un COBRO, nunca un ingreso nuevo:
+  // el ingreso ya se reconoció al emitir la factura.
+  if(tx.amount>0&&typeof modoFacturacion==="function"&&modoFacturacion()==="factura"){
+    for(const r of(pr?INCOME_PR:AUTO_INCOME)){
+      if(!r.re.test(t))continue;
+      const c=S.coa.find(x=>x.code===r.code);
+      // Préstamos (cuenta de pasivo) y los ingresos que nunca se facturan
+      // (cashback, intereses) conservan su cuenta. Lo demás es cobro de factura.
+      if(r.sinFactura||(c&&c.type!=="revenue"))return r.code;
+      break;
+    }
+    return S.coa.find(x=>x.code===CTA_POR_COBRAR)?CTA_POR_COBRAR:"4090";
+  }
   if(tx.amount>0){
     for(const r of(pr?INCOME_PR:AUTO_INCOME))if(r.re.test(t))return r.code;
     return pr?"4090":"4090";
@@ -918,11 +931,12 @@ function updateSidebar(){
 
 function renderDashboard(){
   const txs=S.txns.filter(t=>t.kind!=="transfer");
-  if(!txs.length)return emptyState("📊",`No hay datos para ${S.year}`,"Presiona Sincronizar o agrega entradas manuales.");
-  const rev=txs.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
-  const exp=txs.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
+  const facturado=(S.invoices||[]).length;
+  if(!txs.length&&!facturado)return emptyState("📊",`No hay datos para ${S.year}`,"Presiona Sincronizar o agrega entradas manuales.");
+  const rev=ingresoTotal();
+  const exp=gastoTotal();
   const net=rev-exp,margin=rev>0?((net/rev)*100).toFixed(1):"0.0";
-  const monthly=Array.from({length:12},(_,m)=>({m,lbl:MONTHS[m],inc:txs.filter(t=>t.amount>0&&getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0),exp:txs.filter(t=>t.amount<0&&getTxMonth(t)===m).reduce((s,t)=>s+Math.abs(t.amount),0)}));
+  const monthly=Array.from({length:12},(_,m)=>({m,lbl:MONTHS[m],inc:ingresoTotal(m),exp:gastoTotal(m)}));
   const now=new Date();const curM=S.year===now.getFullYear()?now.getMonth():11;
   const active=monthly.filter(m=>m.m<=curM||m.inc>0||m.exp>0);
   const maxVal=Math.max(...active.flatMap(m=>[m.inc,m.exp]),1);
@@ -933,12 +947,12 @@ function renderDashboard(){
   const svg=`<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg"><line x1="${pL}" y1="${pT}" x2="${pL}" y2="${pT+cH}" stroke="#374151" stroke-width="1"/><line x1="${pL}" y1="${(pT+cH).toFixed(1)}" x2="${svgW-pR}" y2="${(pT+cH).toFixed(1)}" stroke="#374151" stroke-width="1"/>${yL}${bars}</svg>`;
   const expMap={},incMap={};
   txs.filter(t=>t.amount<0).forEach(t=>{const k=t.coaCode||"5900";expMap[k]=(expMap[k]||0)+Math.abs(t.amount)});
-  txs.filter(t=>t.amount>0).forEach(t=>{const k=t.coaCode||"4090";incMap[k]=(incMap[k]||0)+t.amount});
+  Object.assign(incMap,ingresoPorCuenta());
   const topExp=Object.entries(expMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const topInc=Object.entries(incMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const recent=[...txs].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
-  const qRows=QUARTERS.map(q=>{const qi=txs.filter(t=>q.months.includes(getTxMonth(t))&&t.amount>0).reduce((s,t)=>s+t.amount,0);const qe=txs.filter(t=>q.months.includes(getTxMonth(t))&&t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);return`<tr><td style="color:var(--muted)">${q.label}</td><td style="color:#10b981;text-align:right">${qi>0?fmt(qi):"—"}</td><td style="color:#ef4444;text-align:right">${qe>0?fmt(qe):"—"}</td><td style="text-align:right;color:${(qi-qe)>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(qi-qe)}</td></tr>`;}).join("");
-  return`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${txs.filter(t=>t.amount>0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
+  const qRows=QUARTERS.map(q=>{const qi=q.months.reduce((s,m)=>s+ingresoTotal(m),0);const qe=q.months.reduce((s,m)=>s+gastoTotal(m),0);return`<tr><td style="color:var(--muted)">${q.label}</td><td style="color:#10b981;text-align:right">${qi>0?fmt(qi):"—"}</td><td style="color:#ef4444;text-align:right">${qe>0?fmt(qe):"—"}</td><td style="text-align:right;color:${(qi-qe)>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(qi-qe)}</td></tr>`;}).join("");
+  return avisoDobleConteo()+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:2;min-width:260px"><div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span>Ingresos vs Gastos · ${S.year}</span><div style="display:flex;gap:10px;font-size:10px;color:var(--muted)"><span><span style="display:inline-block;width:8px;height:8px;background:#10b981;border-radius:2px;margin-right:3px"></span>Ing</span><span><span style="display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:2px;margin-right:3px"></span>Gas</span></div></div><div class="chart-wrap">${svg}</div></div><div class="card" style="flex:1;min-width:180px"><div class="section-title">Por Trimestre</div><table style="font-size:11px"><thead><tr><th>Q</th><th style="text-align:right">Ing</th><th style="text-align:right">Gas</th><th style="text-align:right">Neto</th></tr></thead><tbody>${qRows}</tbody></table></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:1;min-width:200px"><div class="section-title">Top Gastos</div>${topExp.map(([code,val])=>{const c=S.coa.find(x=>x.code===code);const pct=exp>0?(val/exp*100).toFixed(0):0;return`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c?.name||code}</span><span style="font-size:11px;color:#ef4444;white-space:nowrap">${fmt(val,true)}</span></div><div class="bar-wrap"><div class="bar-fill" style="background:#ef4444;width:${pct}%"></div></div></div>`}).join("")}</div><div class="card" style="flex:1;min-width:200px"><div class="section-title">Top Ingresos</div>${topInc.map(([code,val])=>{const c=S.coa.find(x=>x.code===code);const pct=rev>0?(val/rev*100).toFixed(0):0;return`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c?.name||code}</span><span style="font-size:11px;color:#10b981;white-space:nowrap">${fmt(val,true)}</span></div><div class="bar-wrap"><div class="bar-fill" style="background:#10b981;width:${pct}%"></div></div></div>`}).join("")}</div></div>
   <div class="card"><div class="section-title">Últimas Transacciones</div><table><thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th style="text-align:right">Monto</th></tr></thead><tbody>${recent.map(t=>`<tr><td style="color:var(--muted);white-space:nowrap">${fmtDate(t.date)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</td><td>${catTag(t.coaCode)}</td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(t.amount)}</td></tr>`).join("")}</tbody></table><div style="margin-top:10px;text-align:right"><button class="btn btn-ghost btn-sm" onclick="goTab('txns')">Ver todas →</button></div></div>`;
@@ -947,12 +961,13 @@ function renderDashboard(){
 function renderPL(){
   const revA=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
   const expA=S.coa.filter(c=>c.type==="expense"&&c.group!=="header");
-  const sum=code=>S.txns.filter(t=>t.coaCode===code).reduce((s,t)=>s+Math.abs(t.amount),0);
-  const tR=revA.reduce((s,a)=>s+sum(a.code),0),tE=expA.reduce((s,a)=>s+sum(a.code),0),net=tR-tE;
+  const ing=ingresoPorCuenta(),gas=gastoPorCuenta();
+  const sum=code=>(ing[code]||0)+(gas[code]||0);
+  const tR=ingresoTotal(),tE=gastoTotal(),net=tR-tE;
   const taxNote=net>0?`SE Tax est.: ${fmt(net*.9235*.153)} | Income Tax est.: ${fmt((net-net*.9235*.153/2)*.10)}`:"Sin obligación fiscal estimada";
-  return`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Estado de Resultados</div><div style="display:flex;gap:8px"><button class="btn btn-purple btn-sm" onclick="aiSummarizePL()">🤖 Resumen IA</button><button class="btn btn-ghost btn-sm" onclick="exportPL()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="printCpaPacket()">🖨 Paquete CPA</button></div></div>
+  return avisoDobleConteo()+`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Estado de Resultados</div><div style="display:flex;gap:8px"><button class="btn btn-purple btn-sm" onclick="aiSummarizePL()">🤖 Resumen IA</button><button class="btn btn-ghost btn-sm" onclick="exportPL()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="printCpaPacket()">🖨 Paquete CPA</button></div></div>
   <div class="card" style="margin-bottom:16px"><div style="text-align:center;margin-bottom:18px"><div style="font-family:var(--serif);font-size:20px;font-weight:600">${escHtml(S.settings.companyName)}</div><div style="font-size:12px;color:var(--muted)">Estado de Resultados · Año Fiscal ${S.year} · Base de Efectivo</div></div>
-  <table><tbody><tr class="pl-section"><td colspan="2">INGRESOS</td></tr>${revA.map(a=>{const v=sum(a.code);return v>0?`<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}</td><td style="text-align:right;color:#10b981">${fmt(v)}</td></tr>`:""}).join("")}<tr class="pl-total" style="color:#10b981"><td>TOTAL INGRESOS</td><td style="text-align:right">${fmt(tR)}</td></tr>
+  <table><tbody><tr class="pl-section"><td colspan="2">INGRESOS</td></tr>${(()=>{const fct=modoFacturacion()==="factura"?cuentasFacturadas():null;return revA.map(a=>{const v=sum(a.code);if(!(v>0))return "";const sf=fct&&!fct.has(a.code);return `<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}${sf?' <span class="tag tag-gold" style="font-size:9px">sin factura</span>':""}</td><td style="text-align:right;color:#10b981">${fmt(v)}</td></tr>`}).join("")})()}<tr class="pl-total" style="color:#10b981"><td>TOTAL INGRESOS</td><td style="text-align:right">${fmt(tR)}</td></tr>
   <tr class="pl-section"><td colspan="2">GASTOS OPERATIVOS</td></tr>${expA.map(a=>{const v=sum(a.code);return v>0?`<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}</td><td style="text-align:right;color:#ef4444">(${fmt(v,true)})</td></tr>`:""}).join("")}<tr class="pl-total" style="color:#ef4444"><td>TOTAL GASTOS</td><td style="text-align:right">(${fmt(tE,true)})</td></tr>
   <tr class="pl-net" style="color:${net>=0?'#10b981':'#ef4444'}"><td>UTILIDAD NETA</td><td style="text-align:right">${fmt(net)}</td></tr>${tR>0?`<tr><td style="padding:4px 10px 10px;font-size:11px;color:var(--muted)">Margen</td><td style="text-align:right;padding:4px 10px 10px;font-size:11px;color:${net>=0?'#10b981':'#ef4444'}">${((net/tR)*100).toFixed(1)}%</td></tr>`:""}</tbody></table></div>
   <div id="pl-ai-result"></div>
@@ -961,8 +976,9 @@ function renderPL(){
 async function aiSummarizePL(){
   const revA=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
   const expA=S.coa.filter(c=>c.type==="expense"&&c.group!=="header");
-  const sum=code=>S.txns.filter(t=>t.coaCode===code).reduce((s,t)=>s+Math.abs(t.amount),0);
-  const tR=revA.reduce((s,a)=>s+sum(a.code),0),tE=expA.reduce((s,a)=>s+sum(a.code),0),net=tR-tE;
+  const ing=ingresoPorCuenta(),gas=gastoPorCuenta();
+  const sum=code=>(ing[code]||0)+(gas[code]||0);
+  const tR=ingresoTotal(),tE=gastoTotal(),net=tR-tE;
   const el=document.getElementById("pl-ai-result");if(!el)return;
   el.innerHTML=`<div class="card" style="margin-bottom:14px;border-color:rgba(139,92,246,.3)"><div class="ai-typing"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div></div>`;
   try{
@@ -1027,9 +1043,11 @@ function renderProjects(){
       </div>
     </div>`;
   }
-  const txs=S.txns.filter(t=>t.kind!=="transfer"),tR=txs.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0),tE=txs.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
-  const cards=activeProjects().map(p=>{const rev=txs.filter(t=>t.amount>0&&p.codes.includes(t.coaCode)).reduce((s,t)=>s+t.amount,0);const pct=tR>0?(rev/tR*100).toFixed(1):0;const net=rev-(tR>0?tE*(rev/tR):0);const cnt=txs.filter(t=>p.codes.includes(t.coaCode)).length;return`<div class="card" style="border-left:4px solid ${p.color};flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:20px">${p.icon}</span><div><div style="font-size:13px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${cnt} transacciones</div></div></div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:${p.color};margin-bottom:4px">${fmt(rev)}</div><div class="bar-wrap"><div class="bar-fill" style="background:${p.color};width:${pct}%"></div></div><div style="font-size:10px;color:var(--muted);margin-top:3px">${pct}% ingresos</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Utilidad est.: <strong style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</strong></div></div>`;}).join("");
-  const tRows=Array.from({length:12},(_,m)=>{const cols=activeProjects().map(p=>{const v=txs.filter(t=>t.amount>0&&p.codes.includes(t.coaCode)&&getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0);return`<td style="text-align:right;color:${v>0?p.color:'var(--muted)'}">${v>0?fmt(v):"—"}</td>`;}).join("");return`<tr><td style="color:var(--muted)">${MONTHS[m]}</td>${cols}</tr>`;}).join("");
+  const txs=S.txns.filter(t=>t.kind!=="transfer"),tR=ingresoTotal(),tE=gastoTotal();
+  const ingCta=ingresoPorCuenta();
+  const revProy=p=>p.codes.reduce((s,c)=>s+(ingCta[c]||0),0);
+  const cards=activeProjects().map(p=>{const rev=revProy(p);const pct=tR>0?(rev/tR*100).toFixed(1):0;const net=rev-(tR>0?tE*(rev/tR):0);const cnt=modoFacturacion()==="factura"?facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))&&(f.lineas||[]).some(l=>p.codes.includes(l.coaCode))).length:txs.filter(t=>p.codes.includes(t.coaCode)).length;return`<div class="card" style="border-left:4px solid ${p.color};flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:20px">${p.icon}</span><div><div style="font-size:13px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${cnt} ${modoFacturacion()==="factura"?"facturas":"transacciones"}</div></div></div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:${p.color};margin-bottom:4px">${fmt(rev)}</div><div class="bar-wrap"><div class="bar-fill" style="background:${p.color};width:${pct}%"></div></div><div style="font-size:10px;color:var(--muted);margin-top:3px">${pct}% ingresos</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Utilidad est.: <strong style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</strong></div></div>`;}).join("");
+  const tRows=Array.from({length:12},(_,m)=>{const im=ingresoPorCuenta(m);const cols=activeProjects().map(p=>{const v=p.codes.reduce((s,c)=>s+(im[c]||0),0);return`<td style="text-align:right;color:${v>0?p.color:'var(--muted)'}">${v>0?fmt(v):"—"}</td>`;}).join("");return`<tr><td style="color:var(--muted)">${MONTHS[m]}</td>${cols}</tr>`;}).join("");
   return`<div style="font-size:15px;font-weight:600;margin-bottom:14px">Reportes por Proyecto</div><div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px">${cards}</div><div class="card"><div class="section-title">Ingresos Mensuales por Proyecto</div><div style="overflow-x:auto"><table style="font-size:11px;min-width:500px"><thead><tr><th>Mes</th>${activeProjects().map(p=>`<th style="text-align:right;color:${p.color}">${p.icon} ${p.name}</th>`).join("")}</tr></thead><tbody>${tRows}</tbody></table></div></div>`;
 }
 
@@ -1436,7 +1454,7 @@ function buildAiContext(){
   if(next)L.push(`PRÓXIMO VENCIMIENTO: ${next.q} el ${next.due} por ${fmt(next.tot)}.`);
   L.push(`Otras fechas: Sunbiz Annual Report ${S.year}-05-01 ($138.75).`);
   }else if((S.settings.taxProfile||"")==="pr-ivu"){
-    const r=ivuRates(), an=ivuMensual();
+    const r=ivuRates(), an=(typeof modoFacturacion==="function"&&modoFacturacion()==="factura")?ivuDevengado():ivuMensual();
     L.push(``);L.push(`== IVU PUERTO RICO ==`);
     L.push(`Tasas: ${r.estatal}% estatal + ${r.municipal}% municipal = ${r.estatal+r.municipal}% general. ${r.especial}% especial para servicios B2B (SIN el municipal).`);
     L.push(`Ventas gravables ${S.year}: ${fmt(an.baseGravable)} | exentas: ${fmt(an.exento)}`);
@@ -1451,6 +1469,22 @@ function buildAiContext(){
 
   L.push(``);
   L.push(`== REGLAS ==`);
+  if(modoFacturacion()==="factura"){
+    const fs=facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f)));
+    const iv=ivuDevengado();
+    const porCobrar=fs.reduce((s,f)=>s+Math.max(0,balanceFactura(f)),0);
+    L.push(`== FACTURACIÓN (esta empresa trabaja en BASE DE FACTURA) ==`);
+    L.push(`- ${fs.length} facturas emitidas en ${S.year} · ${(S.customers||[]).length} clientes · ${(S.products||[]).length} productos`);
+    L.push(`- Facturado: ${fmt(fs.reduce((s,f)=>s+calcFactura(f).total,0))} · pendiente de cobro: ${fmt(porCobrar)}`);
+    L.push(`- IVU devengado ${S.year}: estatal ${fmt(iv.estatal)} (cta 2100) + municipal ${fmt(iv.municipal)} (cta 2110)${iv.especial?` + especial 4% ${fmt(iv.especial)} (cta 2120)`:""} = ${fmt(iv.total)}. Remitido a Hacienda: ${fmt(ivuRemitido())}.`);
+    L.push(`- Base gravable ${fmt(iv.baseGravable)} · ventas exentas ${fmt(iv.exento)}`);
+    const top=fs.map(f=>({c:nombreCliente(f.clienteId),v:calcFactura(f).total})).reduce((m,x)=>{m[x.c]=(m[x.c]||0)+x.v;return m},{});
+    const t5=Object.entries(top).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    if(t5.length)L.push(`- Mejores clientes: ${t5.map(([c,v])=>`${c} ${fmt(v)}`).join(" · ")}`);
+    L.push(`- IMPORTANTE: el ingreso nace al EMITIR la factura, no al cobrarla. Los depósitos del banco son cobros contra Cuentas por Cobrar (1100), no ingresos.`);
+    const dc=ingresosBancoEnCuentasDeIngreso();
+    if(dc.length)L.push(`- ⚠️ HAY ${dc.length} movimientos de banco (${fmt(dc.reduce((s,t)=>s+t.amount,0))}) mal puestos en cuentas de ingreso: eso duplica los ingresos. Avísale al usuario.`);
+  }
   L.push(`- Estos datos vienen de la contabilidad real del usuario en esta app. Úsalos. NUNCA digas que no tienes acceso a sus registros.`);
   L.push(`- Si una cifra no está arriba, dilo claramente en vez de inventarla o estimarla sin avisar.`);
   L.push(`- Responde en español, directo y práctico. Usa markdown y tablas cuando ayuden.`);
@@ -1509,10 +1543,13 @@ async function exportAllData(){
   const transactions={};
   for(const yr of S.years){const t=await dbGet(`txns:${yr}`);transactions[yr]=t||[];}
   transactions[S.year]=S.txns;
-  const data={version:2,exportDate:new Date().toISOString(),settings:S.settings,coa:S.coa,bankAccounts:S.bankAccounts,years:S.years,budget:S.budget,balanceEntries:S.balanceEntries,transactions};
+  const data={version:3,exportDate:new Date().toISOString(),company:activeCompany(),
+    settings:S.settings,coa:S.coa,bankAccounts:S.bankAccounts,years:S.years,budget:S.budget,
+    balanceEntries:S.balanceEntries,projects:S.projects,
+    customers:S.customers||[],products:S.products||[],invoices:S.invoices||[],transactions};
   const total=Object.values(transactions).reduce((s,t)=>s+t.length,0);
-  downloadFile(`ContaFlow_backup_${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(data,null,2),"application/json");
-  toast(`✅ Backup: ${S.years.length} años, ${total} transacciones`);
+  downloadFile(`ContaFlow_backup_${(activeCompany().name||"").replace(/[^\w]+/g,"_")}_${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(data,null,2),"application/json");
+  toast(`✅ Backup: ${S.years.length} años · ${total} transacciones · ${(S.invoices||[]).length} facturas · ${(S.customers||[]).length} clientes`);
 }
 function exportTxns(){let csv="Fecha,Descripción,Contraparte,Categoría,Código,Monto,Nota\n";[...S.txns].sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{const name=S.coa.find(c=>c.code===t.coaCode)?.name||"";csv+=`${t.date},"${(t.description||"").replace(/"/g,'""')}","${(t.counterparty||"").replace(/"/g,'""')}","${name}",${t.coaCode||""},${t.amount},"${(t.note||"").replace(/"/g,'""')}"\n`;});downloadFile(`Transacciones_${S.year}.csv`,csv,"text/csv")}
 function downloadFile(name,content,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click()}
@@ -1578,9 +1615,13 @@ async function importJSON(){
       if(data.years){S.years=data.years;await saveYears()}
       if(data.budget){S.budget=data.budget;await saveBudget()}
       if(data.balanceEntries){S.balanceEntries=data.balanceEntries;await saveBalanceEntries()}
+      if(data.projects){S.projects=data.projects;await dbSet("projects",S.projects)}
+      if(data.customers){S.customers=data.customers;await saveCustomers()}
+      if(data.products){S.products=data.products;await saveProducts()}
+      if(data.invoices){S.invoices=data.invoices;await saveInvoices()}
       for(const [y,txs] of Object.entries(data.transactions||{}))await dbSet(`txns:${y}`,txs.map(t=>({...t,coaCode:t.coaCode||autoCategory(t)})));
       S.allTxns={};for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
-      await loadYearTxns(S.year);closeModal();updateSidebar();renderContent();toast("✅ Respaldo importado");
+      await loadYearTxns(S.year);closeModal();updateSidebar();renderContent();toast(`✅ Respaldo importado${(S.invoices||[]).length?` · ${S.invoices.length} facturas`:""}`);
     }else if(Array.isArray(data)){
       const mapped=data.map(t=>({id:t.id||`imp_${Date.now()}_${Math.random()}`,date:(t.date||t.postedAt||"").slice(0,10),description:t.description||t.bankDescription||t.counterpartyName||"",amount:t.amount||0,counterparty:t.counterparty||t.counterpartyName||"",note:t.note||"",kind:t.kind||"",accountId:t.accountId||"",coaCode:t.coaCode||autoCategory(t),isManual:false}));
       // Agrupa por año según la FECHA de cada transacción (no el año activo)
@@ -2541,6 +2582,102 @@ function revisarDiferenciasZoho(){
   </div>`);
 }
 
+// ═══ INGRESOS SEGÚN EL MODO DE LA EMPRESA ═══
+// En base de caja el ingreso nace del banco. En base de factura nace de la factura,
+// y el depósito del banco es solo un cobro contra Cuentas por Cobrar.
+const CTA_POR_COBRAR="1100";
+function esIngresoSinFactura(desc){
+  const t=String(desc||"").toLowerCase();
+  return (perfilPR()?INCOME_PR:AUTO_INCOME).some(r=>r.sinFactura&&r.re.test(t));
+}
+function cuentasFacturadas(){
+  const s=new Set();
+  facturasDelAnio().forEach(f=>{
+    if(["borrador","anulada"].includes(estadoFactura(f)))return;
+    (f.lineas||[]).forEach(l=>{if(l.coaCode)s.add(l.coaCode)});
+  });
+  return s;
+}
+function ingresoPorCuenta(mes){
+  const map={};
+  if(modoFacturacion()==="factura"){
+    facturasDelAnio().forEach(f=>{
+      if(["borrador","anulada"].includes(estadoFactura(f)))return;
+      if(mes!==undefined&&(+String(f.fecha).slice(5,7)-1)!==mes)return;
+      (f.lineas||[]).forEach(l=>{
+        const b=(Number(l.cant)||0)*(Number(l.precio)||0);
+        if(!b)return;
+        const c=l.coaCode||"4090";
+        map[c]=(map[c]||0)+b;
+      });
+    });
+    // Ingresos que nunca llevan factura (cashback, intereses del banco): se suman
+    // solo si su cuenta NO la usa ninguna factura, para no contar dos veces.
+    const rev=new Set(S.coa.filter(c=>c.type==="revenue").map(c=>c.code));
+    S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&rev.has(t.coaCode)
+        &&esIngresoSinFactura(t.description)&&(mes===undefined||getTxMonth(t)===mes))
+      .forEach(t=>{map[t.coaCode]=(map[t.coaCode]||0)+t.amount});
+  }else{
+    S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&(mes===undefined||getTxMonth(t)===mes))
+      .forEach(t=>{const c=t.coaCode||"4090";map[c]=(map[c]||0)+t.amount});
+  }
+  return map;
+}
+function ingresoTotal(mes){return Object.values(ingresoPorCuenta(mes)).reduce((s,v)=>s+v,0)}
+function ingresoDeCuenta(code){return ingresoPorCuenta()[code]||0}
+function gastoPorCuenta(mes){
+  const map={};
+  S.txns.filter(t=>t.kind!=="transfer"&&t.amount<0&&(mes===undefined||getTxMonth(t)===mes))
+    .forEach(t=>{const c=t.coaCode||"5900";
+      if((S.coa.find(x=>x.code===c)||{}).type!=="expense")return;   // pagos de IVU y de préstamo no son gasto
+      map[c]=(map[c]||0)+Math.abs(t.amount)});
+  return map;
+}
+function gastoTotal(mes){return Object.values(gastoPorCuenta(mes)).reduce((s,v)=>s+v,0)}
+function etiquetaOrigen(){
+  return modoFacturacion()==="factura"
+    ? `Ingresos desde <strong>facturas emitidas</strong> · gastos desde el banco`
+    : `Ingresos y gastos desde el banco`;
+}
+
+// ── Detector de doble conteo ──
+// En base de factura, un ingreso del banco NO puede estar en una cuenta 40xx:
+// ese depósito es el cobro de una factura que ya reconoció el ingreso.
+function ingresosBancoEnCuentasDeIngreso(){
+  if(modoFacturacion()!=="factura")return [];
+  if(!cuentasFacturadas().size)return [];   // sin facturas todavía no hay nada que duplicar
+  const rev=new Set(S.coa.filter(c=>c.type==="revenue").map(c=>c.code));
+  return S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&rev.has(t.coaCode)
+    &&!esIngresoSinFactura(t.description));
+}
+function avisoDobleConteo(){
+  const malas=ingresosBancoEnCuentasDeIngreso();
+  if(!malas.length)return "";
+  const monto=malas.reduce((s,t)=>s+t.amount,0);
+  const fact=ingresoTotal();
+  return `<div class="card" style="margin-bottom:14px;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)">
+    <div style="font-size:12.5px;font-weight:600;color:var(--red);margin-bottom:6px">⚠️ Ingresos contados dos veces</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.75">
+      ${escHtml(activeCompany().name)} trabaja en <strong>base de factura</strong>, pero hay <strong>${malas.length}</strong> movimientos del banco por <strong>${fmt(monto)}</strong> asignados a cuentas de ingreso.
+      Esos depósitos son <strong>cobros</strong> de facturas que ya reconocieron el ingreso${fact?` (${fmt(fact)} facturado)`:""} — si se quedan ahí, tus ingresos y tu IVU salen inflados.
+      <br>Lo correcto es moverlos a <strong>${CTA_POR_COBRAR} Cuentas por Cobrar</strong>.
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="moverIngresosACobrar()">Mover ${malas.length} a Cuentas por Cobrar</button>
+      <button class="btn btn-ghost btn-sm" onclick="goTab('txns');S.filterSign='in';renderContent()">Ver cuáles son</button>
+    </div>
+  </div>`;
+}
+async function moverIngresosACobrar(){
+  if(!S.coa.find(c=>c.code===CTA_POR_COBRAR))
+    return toast(`⚠️ Falta la cuenta ${CTA_POR_COBRAR} Cuentas por Cobrar en el plan de cuentas`);
+  const malas=new Set(ingresosBancoEnCuentasDeIngreso().map(t=>t.id));
+  if(!malas.size)return toast("Nada que mover");
+  S.txns=S.txns.map(t=>malas.has(t.id)?{...t,coaCode:CTA_POR_COBRAR,
+    note:(t.note?t.note+" · ":"")+"Cobro de factura (movido desde cuenta de ingreso)"}:t);
+  await saveTxns();updateSidebar();renderContent();
+  toast(`✅ ${malas.size} movimientos reclasificados como cobros`);
+}
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
 function taxQuarters(){
   return QUARTERS.map(q=>{
@@ -2610,8 +2747,9 @@ function exportBalanceCsv(){
 function printCpaPacket(){
   const revA=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
   const expA=S.coa.filter(c=>c.type==="expense"&&c.group!=="header");
-  const sum=code=>S.txns.filter(t=>t.coaCode===code).reduce((s,t)=>s+Math.abs(t.amount),0);
-  const tR=revA.reduce((s,a)=>s+sum(a.code),0),tE=expA.reduce((s,a)=>s+sum(a.code),0),net=tR-tE;
+  const ing=ingresoPorCuenta(),gas=gastoPorCuenta();
+  const sum=code=>(ing[code]||0)+(gas[code]||0);
+  const tR=ingresoTotal(),tE=gastoTotal(),net=tR-tE;
   const entries=S.balanceEntries.filter(e=>e.year===S.year);
   const bankAssets=S.bankAccounts.filter(a=>a.type!=="credit").map(a=>({name:a.name,amount:computeAccountBalance(a.id)}));
   const bankLiabs=S.bankAccounts.filter(a=>a.type==="credit").map(a=>({name:a.name,amount:computeAccountBalance(a.id)})).filter(e=>Math.abs(e.amount)>0.005);
@@ -2967,7 +3105,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.17"; //@build
+const BUILD="2026-09-16.18"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
