@@ -173,6 +173,10 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
       <div class="logo-sub" id="sidebar-company">Joint Strategy USA, LLC</div>
       <div class="logo-ver">v2.0 · AI Edition</div>
     </div>
+    <div class="year-block" id="company-block" style="display:none">
+      <div class="year-label">Empresa</div>
+      <select class="year-select" id="company-select" onchange="switchCompany(this.value)"></select>
+    </div>
     <div class="year-block">
       <div class="year-label">Año Fiscal</div>
       <select class="year-select" id="year-select" onchange="changeYear(this.value)"></select>
@@ -365,7 +369,7 @@ let S={
     {id:"m5446",name:"Mercury Savings ••5446",bank:"Mercury",type:"savings",last4:"5446",color:"#f59e0b",note:"Reserva Impuestos",openingBalance:0,openingDate:"2025-01-01"},
     {id:"mcredit",name:"Mercury Credit (Tarjeta)",bank:"Mercury",type:"credit",last4:"",color:"#8b5cf6",note:"Tarjeta de crédito empresarial — balance = deuda actual",openingBalance:0,openingDate:"2025-01-01"},
   ],
-  years:[2025],txns:[],allTxns:{},budget:{},balanceEntries:[],aiMessages:[],projects:[],
+  years:[2025],txns:[],allTxns:{},budget:{},balanceEntries:[],aiMessages:[],projects:[],companies:[],companyId:"jsusa",
   filterSearch:"",filterCode:"",filterSign:"",
 };
 
@@ -389,7 +393,7 @@ function idbSet(k,v){return new Promise((res,rej)=>{const tx=db.transaction("sto
 function idbKeys(){return new Promise((res,rej)=>{const tx=db.transaction("store","readonly");const r=tx.objectStore("store").getAllKeys();r.onsuccess=()=>res(r.result||[]);r.onerror=rej});}
 
 // --- Almacén híbrido: nube primero, caché local de respaldo ---
-async function dbGet(k){
+async function dbGetRaw(k){
   if(sb&&USER&&!OFFLINE){
     try{
       const {data,error}=await sb.from("app_data").select("value").eq("user_id",USER.id).eq("key",k).maybeSingle();
@@ -401,7 +405,7 @@ async function dbGet(k){
   }
   return await idbGet(k);
 }
-async function dbSet(k,v){
+async function dbSetRaw(k,v){
   await idbSet(k,v); // siempre guarda local primero
   if(sb&&USER&&!OFFLINE){
     try{
@@ -409,6 +413,172 @@ async function dbSet(k,v){
       if(error)throw error;
     }catch(e){console.warn("Escritura nube falló:",e.message);toast("⚠️ Sin conexión — guardado solo local");}
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  MULTI-EMPRESA
+//  Cada empresa tiene sus propios datos. La primera empresa
+//  (LEGACY_CO) sigue usando las claves originales sin prefijo,
+//  así que los datos existentes NUNCA se tocan ni se migran.
+// ═══════════════════════════════════════════════════════════
+const LEGACY_CO="jsusa";
+// Copias limpias de los valores por defecto, para no arrastrar datos entre empresas
+const DEFAULT_BANKS=S.bankAccounts.map(x=>({...x}));
+
+function coKey(key){
+  return (!S.companyId||S.companyId===LEGACY_CO) ? key : `co:${S.companyId}:${key}`;
+}
+// Sustituyen a las originales: todas las llamadas existentes quedan namespaced
+async function dbGet(key){ return dbGetRaw(coKey(key)) }
+async function dbSet(key,val){ return dbSetRaw(coKey(key),val) }
+
+function defaultCompanies(){
+  return [{
+    id:LEGACY_CO,
+    name:(S.settings&&S.settings.companyName)||"Joint Strategy USA, LLC",
+    entity:(S.settings&&S.settings.entity)||"LLC Pass-Through",
+    state:(S.settings&&S.settings.state)||"Florida",
+    icon:"🏢", color:"#10b981", taxProfile:"fl-llc"
+  }];
+}
+function activeCompany(){
+  return (S.companies||[]).find(c=>c.id===S.companyId) || defaultCompanies()[0];
+}
+async function saveCompanies(){
+  await dbSetRaw("companies",S.companies);
+  await dbSetRaw("activeCompany",S.companyId);
+}
+
+// Vuelca la identidad de la empresa activa en S.settings, que es
+// de donde leen las 24 referencias que ya existían en la app.
+function syncCompanyIntoSettings(){
+  const c=activeCompany();
+  S.settings.companyName=c.name;
+  S.settings.entity=c.entity;
+  S.settings.state=c.state;
+  S.settings.taxProfile=c.taxProfile||"fl-llc";
+}
+
+async function loadCompanies(){
+  const list=await dbGetRaw("companies");
+  const act=await dbGetRaw("activeCompany");
+  S.companies=(list&&list.length)?list:defaultCompanies();
+  S.companyId=(act&&S.companies.some(c=>c.id===act))?act:S.companies[0].id;
+}
+
+function buildCompanySelect(){
+  const sel=document.getElementById("company-select");
+  if(!sel)return;
+  const multi=(S.companies||[]).length>1;
+  const blk=document.getElementById("company-block");
+  if(blk)blk.style.display=multi?"block":"none";
+  sel.innerHTML=(S.companies||[]).map(c=>
+    `<option value="${c.id}" ${c.id===S.companyId?"selected":""}>${escHtml(c.icon||"🏢")} ${escHtml(c.name)}</option>`
+  ).join("");
+}
+
+async function switchCompany(id){
+  if(id===S.companyId)return;
+  const c=(S.companies||[]).find(x=>x.id===id);
+  if(!c)return;
+  S.companyId=id;
+  await dbSetRaw("activeCompany",id);
+  // estado limpio: nada de la empresa anterior puede quedarse colgado
+  S.txns=[];S.allTxns={};S.budget={};S.balanceEntries=[];S.aiMessages=[];
+  S.projects=[];S.years=[2025];S.filterSearch="";S.filterCode="";S.filterSign="";
+  S.coa=DEFAULT_COA.map(x=>({...x}));
+  S.bankAccounts=(id===LEGACY_CO)?DEFAULT_BANKS.map(x=>({...x})):[];
+  syncCompanyIntoSettings();
+  await loadState();
+  syncCompanyIntoSettings();   // loadState puede traer settings guardados; la empresa manda
+  buildYearSelect();buildCompanySelect();buildNav();updateSidebar();renderContent();
+  toast(`${c.icon||"🏢"} ${c.name}`);
+}
+
+// ---- Configuración ----
+function renderCompanySettings(){
+  const rows=(S.companies||[]).map((c,i)=>{
+    const act=c.id===S.companyId;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(31,41,55,.4)">
+      <span style="font-size:17px;width:24px;text-align:center">${escHtml(c.icon||"🏢")}</span>
+      <span style="width:4px;height:26px;border-radius:2px;background:${escHtml(c.color||"#6b7280")};flex-shrink:0"></span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;font-weight:600">${escHtml(c.name)}${act?' <span style="font-size:9px;color:#10b981;background:rgba(16,185,129,.12);padding:2px 6px;border-radius:3px;margin-left:4px">activa</span>':""}</div>
+        <div style="font-size:10px;color:var(--muted)">${escHtml(c.entity||"—")} · ${escHtml(c.state||"—")} · ${c.taxProfile==="fl-llc"?"impuestos FL activos":"impuestos sin configurar"}</div>
+      </div>
+      ${!act?`<button class="btn btn-ghost btn-sm" onclick="switchCompany('${c.id}')">Abrir</button>`:""}
+      <button class="btn btn-ghost btn-sm" onclick="showCompanyModal(${i})">✏️</button>
+      ${c.id!==LEGACY_CO?`<button class="btn btn-ghost btn-sm" onclick="removeCompany(${i})">🗑</button>`:""}
+    </div>`;
+  }).join("");
+
+  return `<div class="card"><div class="section-title">🏢 Empresas</div>
+    <p style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:10px">Cada empresa tiene sus propias transacciones, plan de cuentas, bancos, proyectos, presupuesto y conversaciones con el CFO. Nada se mezcla.</p>
+    <div style="margin-bottom:12px">${rows}</div>
+    <button class="btn btn-primary btn-sm" onclick="showCompanyModal(-1)">+ Nueva empresa</button>
+    <div style="font-size:10px;color:var(--muted);margin-top:10px;line-height:1.6">💡 ¿Vienes de otra app ContaFlow/GenovaFlow? Crea la empresa, ábrela, y usa <strong>Importar JSON</strong> con el backup de la otra app.</div>
+  </div>`;
+}
+
+function showCompanyModal(idx){
+  const c=idx>=0?S.companies[idx]:{id:"",name:"",entity:"",state:"",icon:"🏢",color:"#3b82f6",taxProfile:"none"};
+  const esLegacy=idx>=0&&c.id===LEGACY_CO;
+  const html=`<div class="modal">
+    <div class="modal-title">${idx>=0?"Editar empresa":"Nueva empresa"}</div>
+    <div class="input-row">
+      <div style="flex:2"><label>Nombre *</label><input id="co-name" style="width:100%" value="${escHtml(c.name)}" placeholder="Ej: Genova Beauty & Equipment"></div>
+      <div><label>Icono</label><input id="co-icon" style="width:62px;text-align:center" value="${escHtml(c.icon||"🏢")}" maxlength="2"></div>
+      <div><label>Color</label><input type="color" id="co-color" value="${escHtml(c.color||"#3b82f6")}" style="width:44px;height:34px;padding:2px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer"></div>
+    </div>
+    <div class="input-row">
+      <div style="flex:1"><label>Entidad</label><input id="co-entity" style="width:100%" value="${escHtml(c.entity||"")}" placeholder="Ej: LLC, Corp, DBA"></div>
+      <div style="flex:1"><label>Jurisdicción</label><input id="co-state" style="width:100%" value="${escHtml(c.state||"")}" placeholder="Ej: Puerto Rico"></div>
+    </div>
+    <label style="margin-top:8px">Módulo de impuestos</label>
+    <select id="co-tax" style="width:100%">
+      <option value="fl-llc" ${(c.taxProfile||"none")==="fl-llc"?"selected":""}>Florida LLC Pass-Through (SE Tax + Form 1040-ES)</option>
+      <option value="none" ${(c.taxProfile||"none")==="none"?"selected":""}>Sin configurar — no calcular impuestos</option>
+    </select>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.7">⚠️ El perfil de Florida aplica SE Tax 15.3%, tramo estimado del 10% y el calendario del Form 1040-ES. <strong>No uses ese perfil para una empresa de Puerto Rico</strong> — las reglas son distintas. Elige "Sin configurar" y consulta a tu CPA.</div>
+    ${esLegacy?'<div style="font-size:10.5px;color:#f59e0b;margin-top:8px;line-height:1.6">Esta es tu empresa original. Sus datos viven en las claves originales y no se pueden mover — puedes renombrarla sin problema.</div>':""}
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveCompanyForm(${idx})">Guardar</button>
+    </div>
+  </div>`;
+  const bg=document.createElement("div");bg.className="modal-bg";bg.id="active-modal";bg.innerHTML=html;
+  bg.addEventListener("click",e=>{if(e.target===bg)closeModal()});
+  document.getElementById("modal-container").appendChild(bg);
+}
+
+async function saveCompanyForm(idx){
+  const name=document.getElementById("co-name").value.trim();
+  if(!name)return toast("⚠️ Ponle un nombre");
+  const obj={
+    id: idx>=0 ? S.companies[idx].id : `co_${Date.now()}`,
+    name,
+    entity:document.getElementById("co-entity").value.trim(),
+    state:document.getElementById("co-state").value.trim(),
+    icon:document.getElementById("co-icon").value||"🏢",
+    color:document.getElementById("co-color").value,
+    taxProfile:document.getElementById("co-tax").value
+  };
+  const nueva=idx<0;
+  if(nueva)S.companies=[...S.companies,obj]; else S.companies[idx]=obj;
+  await saveCompanies();
+  if(!nueva&&obj.id===S.companyId){syncCompanyIntoSettings();await saveSettings();}
+  closeModal();buildCompanySelect();updateSidebar();renderContent();
+  toast(nueva?`✅ ${obj.name} creada — ábrela para empezar`:"✅ Empresa actualizada");
+}
+
+async function removeCompany(idx){
+  const c=S.companies[idx];
+  if(c.id===LEGACY_CO)return toast("⚠️ La empresa original no se puede borrar");
+  if(!confirm(`¿Quitar "${c.name}" de la lista?\n\nSus datos NO se borran: quedan guardados bajo su propio espacio y vuelven a aparecer si creas otra vez una empresa con el mismo identificador. Para borrarlos de verdad, entra en la empresa y usa "Borrar datos del año".`))return;
+  if(S.companyId===c.id)await switchCompany(LEGACY_CO);
+  S.companies=S.companies.filter((_,i)=>i!==idx);
+  await saveCompanies();buildCompanySelect();renderContent();toast("✅ Empresa quitada de la lista");
 }
 
 // --- Autenticación ---
@@ -491,7 +661,7 @@ async function loadState(){
     const be=await dbGet("balanceEntries");if(be)S.balanceEntries=be;
     const ai=await dbGet("aiMessages");if(ai)S.aiMessages=ai;
     const ad=await dbGet("alertDismissed");if(ad)S.alertDismissed=ad;
-    const pj=await dbGet("projects");S.projects=(pj&&pj.length)?pj:PROJECTS.map(p=>({...p}));
+    const pj=await dbGet("projects");S.projects=(pj&&pj.length)?pj:(S.companyId===LEGACY_CO?PROJECTS.map(p=>({...p})):[]);
     for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
     await loadYearTxns(S.year);
   }catch(e){console.warn(e)}
@@ -804,6 +974,23 @@ function renderCashflow(){
 
 function renderTaxes(){
   const txs=S.txns;
+  if((S.settings.taxProfile||"fl-llc")!=="fl-llc"){
+    const co=activeCompany();
+    const neto=txs.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
+    return`<div style="max-width:720px">
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">Impuestos · ${S.year}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:16px">${escHtml(co.name)} · ${escHtml(co.entity||"—")} · ${escHtml(co.state||"—")}</div>
+      <div class="card kpi" style="margin-bottom:16px"><div class="kpi-label">Utilidad Neta ${S.year}</div><div class="kpi-val" style="color:${neto>=0?'#10b981':'#ef4444'}">${fmt(neto)}</div><div class="kpi-sub">base para el cálculo que haga tu CPA</div></div>
+      <div class="card" style="border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.05)">
+        <div style="font-size:12px;font-weight:600;color:#f59e0b;margin-bottom:8px">⚠️ Módulo fiscal sin configurar para esta empresa</div>
+        <div style="font-size:11.5px;color:var(--muted);line-height:1.8">
+          ContaFlow no calcula impuestos para <strong>${escHtml(co.name)}</strong> porque sus reglas fiscales no están definidas.<br><br>
+          El cálculo que ves en tu otra empresa corresponde a una <strong>LLC de Florida Pass-Through</strong> (SE Tax 15.3%, Form 1040-ES, Sunbiz). Esas reglas <strong>no aplican</strong> a una entidad de otra jurisdicción, y usarlas aquí produciría cifras equivocadas.<br><br>
+          Lo que sí tienes para esta empresa: Estado de Resultados, Balance, Flujo de Caja, Proyectos y el asistente IA. Suficiente para entregarle a tu contador.
+        </div>
+      </div>
+    </div>`;
+  }
   const qData=QUARTERS.map(q=>{const inc=txs.filter(t=>t.amount>0&&q.months.includes(getTxMonth(t))).reduce((s,t)=>s+t.amount,0);const exp=txs.filter(t=>t.amount<0&&q.months.includes(getTxMonth(t))).reduce((s,t)=>s+Math.abs(t.amount),0);const net=inc-exp,se=net>0?net*.9235*.153:0,it=net>0?(net-se/2)*.10:0;const due=q.label==="Q1"?"Apr 15":q.label==="Q2"?"Jun 15":q.label==="Q3"?"Sep 15":"Jan 15";return{q:q.label,inc,exp,net,se,it,tot:se+it,due};});
   const aN=txs.reduce((s,t)=>s+t.amount,0),aSE=aN>0?aN*.9235*.153:0,aIT=aN>0?(aN-aSE/2)*.10:0,aTot=aSE+aIT;
   return`<div style="max-width:800px"><div style="font-size:15px;font-weight:600;margin-bottom:6px">Estimado de Impuestos · ${S.year}</div><div style="font-size:11px;color:var(--muted);margin-bottom:16px">Florida LLC Pass-Through · Form 1040 + Schedule C + SE</div>
@@ -983,6 +1170,7 @@ function buildAiContext(){
 
   L.push(`Eres el CFO digital de José Capote para ${S.settings.companyName} (${S.settings.entity}, ${S.settings.state}).`);
   L.push(`FECHA DE HOY: ${iso}. AÑO FISCAL EN PANTALLA: ${S.year}.`);
+  if((S.companies||[]).length>1)L.push(`Estás viendo SOLO los datos de ${S.settings.companyName}. El usuario tiene otras empresas en la app, pero no ves sus cifras — si pregunta por otra, dile que la seleccione en el menú de Empresa.`);
   L.push(``);
   L.push(`== RESUMEN ${S.year} ==`);
   L.push(`Ingresos ${fmt(rev)} | Gastos ${fmt(exp)} | Utilidad ${fmt(net)} | Margen ${rev>0?((net/rev)*100).toFixed(1):"0"}% | ${op.length} transacciones operativas`);
@@ -1031,11 +1219,15 @@ function buildAiContext(){
     const due=q.label==="Q1"?`${S.year}-04-15`:q.label==="Q2"?`${S.year}-06-15`:q.label==="Q3"?`${S.year}-09-15`:`${S.year+1}-01-15`;
     return{q:q.label,n,tot:se+it,due};
   });
+  if((S.settings.taxProfile||"fl-llc")==="fl-llc"){
   L.push(``);L.push(`== IMPUESTOS ESTIMADOS (Form 1040-ES) ==`);
   qs.forEach(q=>L.push(`${q.q}: neto ${fmt(q.n)} -> pago estimado ${fmt(q.tot)} (vence ${q.due})`));
   const next=qs.find(q=>q.due>=iso);
   if(next)L.push(`PRÓXIMO VENCIMIENTO: ${next.q} el ${next.due} por ${fmt(next.tot)}.`);
   L.push(`Otras fechas: Sunbiz Annual Report ${S.year}-05-01 ($138.75).`);
+  }else{
+    L.push(``);L.push(`== IMPUESTOS ==`);L.push(`El módulo fiscal de esta empresa NO está configurado. No estimes impuestos ni inventes tasas: dile al usuario que las reglas de su jurisdicción las debe confirmar con su CPA.`);
+  }
 
   L.push(``);
   L.push(`== REGLAS ==`);
@@ -1068,13 +1260,21 @@ function renderSettings(){
   <div class="card"><div class="section-title">🏢 Empresa</div><div class="input-row"><div style="flex:1"><label>Nombre</label><input id="s-company" value="${escHtml(S.settings.companyName)}" style="width:100%"></div></div><div class="input-row"><div style="flex:1"><label>Estado</label><input id="s-state" value="${escHtml(S.settings.state)}" style="width:100%"></div><div style="flex:1"><label>Entidad</label><input id="s-entity" value="${escHtml(S.settings.entity)}" style="width:100%"></div></div><button class="btn btn-primary btn-sm" onclick="saveSettingsForm()">Guardar</button></div>
   <div class="card"><div class="section-title">🤖 Anthropic API Key (para IA)</div><p style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">Obtén tu key en <strong>console.anthropic.com → API Keys</strong>. Se guarda solo en este dispositivo.</p><div class="input-row"><div style="flex:1"><label>API Key</label><input id="s-anthropic" type="password" value="${escHtml(S.settings.anthropicApiKey||"")}" placeholder="sk-ant-xxxxxxxxxxxxxxxx" style="width:100%;font-family:monospace"></div></div><button class="btn btn-purple btn-sm" onclick="saveAnthropicKey()">Guardar API Key IA</button></div>
   <div class="card"><div class="section-title">🔑 Conexión con Mercury Bank</div><p style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.7">Tu token de Mercury vive <strong>de forma segura</strong> en el servidor proxy (Cloudflare Worker), nunca en este navegador ni en la nube de datos. La sincronización usa tu sesión para autenticarte.</p><div style="font-size:11px;padding:8px 10px;border-radius:6px;background:${(sb&&USER)?'rgba(16,185,129,.1)':'rgba(245,158,11,.1)'};color:${(sb&&USER)?'#10b981':'#f59e0b'}">${(sb&&USER)?'✅ Conectado — usa el botón 🔄 Sincronizar (arriba) para traer tus transacciones del año seleccionado':'⚠️ Inicia sesión para poder sincronizar con Mercury'}</div><div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.6">💡 La sincronización <strong>fusiona</strong>: trae lo de Mercury sin borrar tus entradas manuales, importaciones CSV ni conciliaciones. Empareja cuentas por los últimos 4 dígitos.</div></div>
+  ${renderCompanySettings()}
   ${renderProjectSettings()}
   <div class="card"><div class="section-title">📅 Años Fiscales</div><div style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><input id="new-year" type="number" placeholder="2026" style="width:120px" min="2020" max="2099"><button class="btn btn-primary btn-sm" onclick="addYear()">+ Agregar</button></div><div style="display:flex;gap:8px;flex-wrap:wrap">${S.years.map(y=>`<div style="display:flex;align-items:center;gap:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:6px 12px"><span style="font-family:var(--serif);font-size:15px;color:#3b82f6;font-weight:600">${y}</span><button onclick="removeYear(${y})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px">🗑</button></div>`).join("")}</div></div>
   <div class="card" style="border-color:rgba(16,185,129,.3)"><div class="section-title">💾 Exportar / Importar</div><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#6ee7b7;line-height:1.7">⚠️ Exporta antes de actualizar en Netlify. El backup incluye TODOS los años.</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="exportAllData()">⬇️ Exportar JSON (todos los años)</button><button class="btn btn-ghost btn-sm" onclick="exportTxns()">⬇️ CSV ${S.year}</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-json')">⬆️ Importar JSON</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-csv')">⬆️ Importar CSV Mercury</button></div></div>
 <div class="card" style="margin-bottom:14px"><div class="section-title">☁️ Sesión y Sincronización</div>${USER?`<div style="font-size:12px;margin-bottom:4px">Conectado como <strong>${escHtml(USER.email||"")}</strong></div><div style="font-size:11px;color:#10b981;margin-bottom:12px">✅ Sincronizando con la nube — tus datos están en todos tus dispositivos</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="showModal('migrate')">☁️ Subir datos locales a la nube</button><button class="btn btn-ghost btn-sm" onclick="authLogout()">🚪 Cerrar sesión</button></div>`:`<div style="font-size:12px;color:#f59e0b;margin-bottom:6px">${OFFLINE?"📴 Modo local (sin conexión)":"⚠️ Sin configurar Supabase"}</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Los datos se guardan solo en este navegador y <strong>no</strong> se sincronizan con el móvil. ${OFFLINE?'<a href="#" onclick="location.reload();return false" style="color:#3b82f6">Reconectar</a>':""}</div>`}</div>
   <div class="card" style="border-color:rgba(239,68,68,.3)"><div class="section-title" style="color:#ef4444">⚠️ Zona de Peligro</div><button class="btn btn-danger btn-sm" onclick="clearYearData()">🗑 Borrar datos de ${S.year}</button></div></div>`;
 }
-async function saveSettingsForm(){S.settings.companyName=document.getElementById("s-company").value;S.settings.state=document.getElementById("s-state").value;S.settings.entity=document.getElementById("s-entity").value;await saveSettings();updateSidebar();toast("✅ Guardado")}
+async function saveSettingsForm(){
+  S.settings.companyName=document.getElementById("s-company").value;
+  S.settings.state=document.getElementById("s-state").value;
+  S.settings.entity=document.getElementById("s-entity").value;
+  const i=S.companies.findIndex(c=>c.id===S.companyId);
+  if(i>=0){S.companies[i]={...S.companies[i],name:S.settings.companyName,state:S.settings.state,entity:S.settings.entity};await saveCompanies();buildCompanySelect();}
+  await saveSettings();updateSidebar();renderContent();toast("✅ Guardado")
+}
 async function saveApiKey(){toast("La API key ahora se maneja de forma segura en el servidor")}
 async function saveAnthropicKey(){S.settings.anthropicApiKey=document.getElementById("s-anthropic").value;await saveSettings();toast("✅ Anthropic API Key guardada")}
 async function testApiKey(){toast("Usa el botón 🔄 Sincronizar para probar la conexión")}
@@ -1212,6 +1412,7 @@ function fiscalDeadlines(){
   return d.sort((a,b)=>a.fecha.localeCompare(b.fecha));
 }
 function taxAlertBanner(){
+  if((S.settings.taxProfile||"fl-llc")!=="fl-llc")return "";
   if(S.alertDismissed===new Date().toISOString().slice(0,10))return "";
   const hoy=new Date().toISOString().slice(0,10);
   const ms=f=>Math.round((new Date(f+"T00:00:00")-new Date(hoy+"T00:00:00"))/86400000);
@@ -1311,11 +1512,12 @@ function printCpaPacket(){
   ${mes.map(x=>`<tr><td>${x.m}</td><td class="n">${fmt(x.mi)}</td><td class="n">${fmt(x.me)}</td><td class="n">${fmt(x.mi-x.me)}</td></tr>`).join("")}
   </table>
 
+  ${(S.settings.taxProfile||"fl-llc")!=="fl-llc"?"":`
   <h2>4 · Estimados Trimestrales (Form 1040-ES)</h2>
   <table><tr><th>Trim.</th><th class="n">Ingresos</th><th class="n">Gastos</th><th class="n">Neto</th><th class="n">SE Tax</th><th class="n">Income Tax</th><th class="n">Total</th><th>Vence</th></tr>
   ${qs.map(q=>`<tr><td>${q.q}</td><td class="n">${fmt(q.inc)}</td><td class="n">${fmt(q.exp)}</td><td class="n">${fmt(q.net)}</td><td class="n">${fmt(q.se)}</td><td class="n">${fmt(q.it)}</td><td class="n">${fmt(q.tot)}</td><td>${q.due}</td></tr>`).join("")}
   </table>
-  <div class="note">SE Tax = 15.3% sobre 92.35% de la utilidad neta. Income Tax estimado al 10% tras deducir la mitad del SE Tax. Son estimados internos, no una declaración.</div>
+  <div class="note">SE Tax = 15.3% sobre 92.35% de la utilidad neta. Income Tax estimado al 10% tras deducir la mitad del SE Tax. Son estimados internos, no una declaración.</div>`}
 
   <div class="foot">Generado por ContaFlow desde los registros contables de ${escHtml(S.settings.companyName)}.
   Cifras en base de efectivo y sujetas a revisión profesional. Este documento no constituye asesoría fiscal ni sustituye la revisión de un CPA.</div>
@@ -1611,7 +1813,11 @@ function renderContent(){
 
 async function bootApp(){
   S.allTxns={};
-  await loadState();buildNav();buildYearSelect();updateSidebar();renderContent();
+  await loadCompanies();
+  syncCompanyIntoSettings();
+  await loadState();
+  syncCompanyIntoSettings();
+  buildNav();buildYearSelect();buildCompanySelect();updateSidebar();renderContent();
 }
 (async()=>{
   await openDB();
