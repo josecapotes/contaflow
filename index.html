@@ -331,12 +331,62 @@ const MERCURY_CAT_MAP={
   RideshareAndTaxis:"6400",Airlines:"6400",Lodging:"6400",Insurance:"5800",
   Electronics:"5010",Retail:"5010",Grocery:"5700"
 };
+// ═══ REGLAS DE CATEGORIZACIÓN POR PERFIL ═══
+const RULES_PR=[
+  {re:/advance\s*servicin|advanceservicin/i,code:"2350"},
+  {re:/island\s*finance/i,code:"2350"},
+  {re:/zoho|hotmart|openai|chatgpt|canva|shopify|godaddy|microsoft|adobe/i,code:"5200"},
+  {re:/alibaba|aliexpress|baifujia|temu|dhgate/i,code:"5010"},
+  {re:/\bdhl\b|fedex|\bups\b|aduana|customs/i,code:"5020"},
+  {re:/t-?mobile|liberty|claro\b|\baee\b|\baaa\b|autoridad de energia|onelink/i,code:"5120"},
+  {re:/facebook|\bmeta\b|instagram|google ads|tiktok ads/i,code:"5140"},
+  {re:/hacienda|ivu sut|\bsuri\b|crim\b/i,code:"2100"},
+  {re:/cargo por servicio|cargos? vencidos|comm svc fee|cargo ivu|service charge/i,code:"5240"},
+  {re:/gas station|autoexpreso|\bshell\b|\bpuma\b|econo gas|garage/i,code:"5220"},
+  {re:/lanco|home depot|ferreteria|national lumber/i,code:"5230"},
+];
+const INCOME_PR=[
+  {re:/advance\s*servicin|advanceservicin|island\s*finance/i,code:"2350"},
+  {re:/stripe/i,code:"4020"},
+  {re:/paypal/i,code:"4020"},
+  {re:/ath movil|ath deposit|deposito|dep[oó]sito|cheque/i,code:"4010"},
+  {re:/cashback|interes|interest/i,code:"4100"},
+];
+const XFER_PR=[/telepago\s+transferencia/i,/telepago\s+visa\s+banco\s+popular/i,/transferencia\s+a\s+cuenta/i,/transferencia\s+de\s+fondos/i];
+const REVERSO_RE=/devuelto|devoluci[oó]n|reclamaci[oó]n|recovery|reversal|revers[oa]/i;
+function perfilPR(){return(S.settings.taxProfile||"fl-llc")==="pr-ivu"}
+function esTransferencia(desc){
+  const t=String(desc||"");
+  if(perfilPR())return XFER_PR.some(re=>re.test(t));
+  return false;
+}
 function autoCategory(tx){
   const t=`${tx.description||''} ${tx.counterparty||''}`.toLowerCase();
-  if(tx.amount>0){for(const r of AUTO_INCOME)if(r.re.test(t))return r.code;return"4090";}
-  for(const r of AUTO_RULES)if(r.re.test(t))return r.code;
-  if(tx.mercuryCategory&&MERCURY_CAT_MAP[tx.mercuryCategory])return MERCURY_CAT_MAP[tx.mercuryCategory];
+  const pr=perfilPR();
+  if(tx.amount>0){
+    for(const r of(pr?INCOME_PR:AUTO_INCOME))if(r.re.test(t))return r.code;
+    return pr?"4090":"4090";
+  }
+  for(const r of(pr?RULES_PR:AUTO_RULES))if(r.re.test(t))return r.code;
+  if(!pr&&tx.mercuryCategory&&MERCURY_CAT_MAP[tx.mercuryCategory])return MERCURY_CAT_MAP[tx.mercuryCategory];
   return"5900";
+}
+// Empareja cada reverso con el débito gemelo y le copia la categoría (se netean a cero)
+function emparejarReversos(lista){
+  const usados=new Set();
+  let n=0;
+  lista.forEach(t=>{
+    if(t.amount<=0||!REVERSO_RE.test(t.description||""))return;
+    let mejor=null,mejorD=1e9;
+    lista.forEach(u=>{
+      if(u===t||usados.has(u.id)||u.amount>=0)return;
+      if(Math.abs(-u.amount-t.amount)>0.005)return;
+      const d=Math.abs(new Date(t.date+"T00:00:00")-new Date(u.date+"T00:00:00"))/86400000;
+      if(d<=15&&d<mejorD){mejor=u;mejorD=d}
+    });
+    if(mejor){usados.add(mejor.id);t.coaCode=mejor.coaCode;t.kind=mejor.kind;t.note=(t.note?t.note+" · ":"")+`Reverso de: ${(mejor.description||"").slice(0,40)}`;n++}
+  });
+  return n;
 }
 const TABS=[
   {id:"dashboard",icon:"📊",label:"Dashboard",s:"reportes"},
@@ -1144,7 +1194,8 @@ function csvRowsToTx(t,map,fmt,acctId){
     }
     const bd=map.bankDesc>=0?(c[map.bankDesc]||""):"";
     const st=map.status>=0?(c[map.status]||""):"";
-    return{date:toISODate(c[map.date],fmt),description:(map.desc>=0?c[map.desc]:"")||"",amount:amt,accountId:acctId||detectAccount(map.src>=0?c[map.src]:""),kind:isInternalXfer(bd)?"transfer":"",status:st||"Sent",bankDesc:bd};
+    const dsc=(map.desc>=0?c[map.desc]:"")||"";
+    return{date:toISODate(c[map.date],fmt),description:dsc,amount:amt,accountId:acctId||detectAccount(map.src>=0?c[map.src]:""),kind:(isInternalXfer(bd)||esTransferencia(dsc))?"transfer":"",status:st||"Sent",bankDesc:bd};
   }).filter(r=>!BAD_STATUS.test(r.status)&&/^\d{4}-\d{2}-\d{2}$/.test(r.date));
 }
 function parseBankData(text){
@@ -1552,6 +1603,7 @@ async function importCSV(){
   const skippedYear=rows.length-inYear.length;
   if(!inYear.length)return toast(`⚠️ Ninguna fila es del año ${S.year}. Cambia de año e intenta de nuevo.`);
   const mapped=inYear.map((r,i)=>({id:`csv_${Date.now()}_${i}`,date:r.date,description:r.description,counterparty:"",amount:r.amount,note:r.bankDesc||"",kind:r.kind,accountId:r.accountId,coaCode:r.kind==="transfer"?"":autoCategory({description:r.description,counterparty:"",amount:r.amount}),isManual:false,reconciled:false}));
+  const revs=emparejarReversos(mapped);
   const dupKey=t=>`${t.date}|${t.description}|${t.amount}`;
   const existingKeys=new Set(S.txns.map(t=>dupKey(t)));
   const fresh=mapped.filter(t=>!existingKeys.has(dupKey(t)));
@@ -1560,7 +1612,7 @@ async function importCSV(){
   if(!S.years.includes(S.year)){S.years=[...S.years,S.year].sort();await saveYears()}
   CSVIMP={t:null,map:null,fmt:"mdy",acct:""};
   closeModal();updateSidebar();renderContent();
-  toast(`✅ ${fresh.length} importadas${dupes?` · ${dupes} duplicadas omitidas`:""}${skippedYear?` · ${skippedYear} de otros años omitidas`:""}`);
+  toast(`✅ ${fresh.length} importadas${revs?` · ${revs} reversos emparejados`:""}${dupes?` · ${dupes} duplicadas omitidas`:""}${skippedYear?` · ${skippedYear} de otros años omitidas`:""}`);
 }
 
 
@@ -1990,7 +2042,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.8"; //@build
+const BUILD="2026-09-16.9"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
