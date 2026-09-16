@@ -946,15 +946,19 @@ function renderDashboard(){
   const bars=active.map((mo,i)=>{const cx=pL+i*colW+colW/2;const iH=mo.inc>0?Math.max((mo.inc/maxVal)*cH,3):0;const eH=mo.exp>0?Math.max((mo.exp/maxVal)*cH,3):0;return`<g>${mo.inc>0?`<rect x="${(cx-gap-barW).toFixed(1)}" y="${(pT+cH-iH).toFixed(1)}" width="${barW.toFixed(1)}" height="${iH.toFixed(1)}" fill="#10b981" fill-opacity=".85" rx="2"/>`:""}${mo.exp>0?`<rect x="${(cx+gap).toFixed(1)}" y="${(pT+cH-eH).toFixed(1)}" width="${barW.toFixed(1)}" height="${eH.toFixed(1)}" fill="#ef4444" fill-opacity=".85" rx="2"/>`:""}` +`<text x="${cx.toFixed(1)}" y="${(svgH-pB+14).toFixed(1)}" text-anchor="middle" fill="#6b7280" font-size="9">${mo.lbl}</text></g>`;}).join("");
   const svg=`<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg"><line x1="${pL}" y1="${pT}" x2="${pL}" y2="${pT+cH}" stroke="#374151" stroke-width="1"/><line x1="${pL}" y1="${(pT+cH).toFixed(1)}" x2="${svgW-pR}" y2="${(pT+cH).toFixed(1)}" stroke="#374151" stroke-width="1"/>${yL}${bars}</svg>`;
   const expMap={},incMap={};
-  txs.filter(t=>t.amount<0).forEach(t=>{const k=t.coaCode||"5900";expMap[k]=(expMap[k]||0)+Math.abs(t.amount)});
+  Object.assign(expMap,gastoPorCuenta());
   Object.assign(incMap,ingresoPorCuenta());
   const topExp=Object.entries(expMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const topInc=Object.entries(incMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const recent=[...txs].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
   const qRows=QUARTERS.map(q=>{const qi=q.months.reduce((s,m)=>s+ingresoTotal(m),0);const qe=q.months.reduce((s,m)=>s+gastoTotal(m),0);return`<tr><td style="color:var(--muted)">${q.label}</td><td style="color:#10b981;text-align:right">${qi>0?fmt(qi):"—"}</td><td style="color:#ef4444;text-align:right">${qe>0?fmt(qe):"—"}</td><td style="text-align:right;color:${(qi-qe)>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(qi-qe)}</td></tr>`;}).join("");
-  return avisoDobleConteo()+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
+  return avisoDobleConteo()+avisoCuentasInexistentes()+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:2;min-width:260px"><div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span>Ingresos vs Gastos · ${S.year}</span><div style="display:flex;gap:10px;font-size:10px;color:var(--muted)"><span><span style="display:inline-block;width:8px;height:8px;background:#10b981;border-radius:2px;margin-right:3px"></span>Ing</span><span><span style="display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:2px;margin-right:3px"></span>Gas</span></div></div><div class="chart-wrap">${svg}</div></div><div class="card" style="flex:1;min-width:180px"><div class="section-title">Por Trimestre</div><table style="font-size:11px"><thead><tr><th>Q</th><th style="text-align:right">Ing</th><th style="text-align:right">Gas</th><th style="text-align:right">Neto</th></tr></thead><tbody>${qRows}</tbody></table></div></div>
-  <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:1;min-width:200px"><div class="section-title">Top Gastos</div>${topExp.map(([code,val])=>{const c=S.coa.find(x=>x.code===code);const pct=exp>0?(val/exp*100).toFixed(0):0;return`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c?.name||code}</span><span style="font-size:11px;color:#ef4444;white-space:nowrap">${fmt(val,true)}</span></div><div class="bar-wrap"><div class="bar-fill" style="background:#ef4444;width:${pct}%"></div></div></div>`}).join("")}</div><div class="card" style="flex:1;min-width:200px"><div class="section-title">Top Ingresos</div>${topInc.map(([code,val])=>{const c=S.coa.find(x=>x.code===code);const pct=rev>0?(val/rev*100).toFixed(0):0;return`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c?.name||code}</span><span style="font-size:11px;color:#10b981;white-space:nowrap">${fmt(val,true)}</span></div><div class="bar-wrap"><div class="bar-fill" style="background:#10b981;width:${pct}%"></div></div></div>`}).join("")}</div></div>
+  ${(()=>{const sg=salidasNoGasto();const tot=Object.values(sg).reduce((a,b)=>a+b,0);if(tot<0.01)return "";
+  return `<div class="card" style="margin-bottom:18px"><div class="section-title">Salidas que no son gasto · ${fmt(tot)}</div>
+  <div style="font-size:10.5px;color:var(--muted);margin-bottom:9px;line-height:1.6">Dinero que salió del banco pero no es gasto del negocio: pago de préstamos, remisión de IVU a Hacienda, retiros del dueño. Va en el Balance, no en el Estado de Resultados.</div>
+  <table style="font-size:12px"><tbody>${Object.entries(sg).sort((a,b)=>b[1]-a[1]).map(([c,v])=>{const ct=S.coa.find(x=>x.code===c);return `<tr><td>${escHtml(ct?ct.code+" · "+ct.name:c+" (cuenta inexistente)")}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(v)}</td></tr>`}).join("")}</tbody></table></div>`})()}
+<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:1;min-width:200px"><div class="section-title">Top Gastos</div>${topExp.map(([code,val])=>{const c=S.coa.find(x=>x.code===code);const pct=exp>0?(val/exp*100).toFixed(0):0;return`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c?.name||code}</span><span style="font-size:11px;color:#ef4444;white-space:nowrap">${fmt(val,true)}</span></div><div class="bar-wrap"><div class="bar-fill" style="background:#ef4444;width:${pct}%"></div></div></div>`}).join("")}</div><div class="card" style="flex:1;min-width:200px"><div class="section-title">Top Ingresos</div>${topInc.map(([code,val])=>{const c=S.coa.find(x=>x.code===code);const pct=rev>0?(val/rev*100).toFixed(0):0;return`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c?.name||code}</span><span style="font-size:11px;color:#10b981;white-space:nowrap">${fmt(val,true)}</span></div><div class="bar-wrap"><div class="bar-fill" style="background:#10b981;width:${pct}%"></div></div></div>`}).join("")}</div></div>
   <div class="card"><div class="section-title">Últimas Transacciones</div><table><thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th style="text-align:right">Monto</th></tr></thead><tbody>${recent.map(t=>`<tr><td style="color:var(--muted);white-space:nowrap">${fmtDate(t.date)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</td><td>${catTag(t.coaCode)}</td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(t.amount)}</td></tr>`).join("")}</tbody></table><div style="margin-top:10px;text-align:right"><button class="btn btn-ghost btn-sm" onclick="goTab('txns')">Ver todas →</button></div></div>`;
 }
 
@@ -2590,6 +2594,61 @@ function esIngresoSinFactura(desc){
   const t=String(desc||"").toLowerCase();
   return (perfilPR()?INCOME_PR:AUTO_INCOME).some(r=>r.sinFactura&&r.re.test(t));
 }
+// Salidas de dinero que NO son gasto: pago de préstamos, remisión de IVU, retiros del dueño.
+// Van en el balance, no en el Estado de Resultados.
+function salidasNoGasto(){
+  const map={};
+  S.txns.filter(t=>t.kind!=="transfer"&&t.amount<0).forEach(t=>{
+    const c=t.coaCode||"5900";
+    const cta=S.coa.find(x=>x.code===c);
+    if(cta&&cta.type==="expense")return;
+    map[c]=(map[c]||0)+Math.abs(t.amount);
+  });
+  return map;
+}
+function cuentasInexistentes(){
+  const usadas=new Set();
+  S.txns.forEach(t=>{if(t.coaCode)usadas.add(t.coaCode)});
+  (S.invoices||[]).forEach(f=>(f.lineas||[]).forEach(l=>{if(l.coaCode)usadas.add(l.coaCode)}));
+  return [...usadas].filter(c=>!S.coa.find(x=>x.code===c));
+}
+function avisoCuentasInexistentes(){
+  const f=cuentasInexistentes();
+  if(!f.length)return "";
+  const det=f.map(c=>{
+    const n=S.txns.filter(t=>t.coaCode===c).length;
+    const v=S.txns.filter(t=>t.coaCode===c).reduce((s,t)=>s+Math.abs(t.amount),0);
+    return `<li><code>${escHtml(c)}</code> — ${n} movimiento${n===1?"":"s"} por ${fmt(v)}</li>`;
+  }).join("");
+  return `<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.06)">
+    <div style="font-size:12.5px;font-weight:600;color:#f59e0b;margin-bottom:6px">⚠️ Hay movimientos en cuentas que no existen</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.75">Estos códigos están asignados a transacciones pero no están en tu Plan de Cuentas, así que no entran en ningún reporte y aparecen como número suelto:</div>
+    <ul style="font-size:11.5px;color:var(--muted);line-height:1.9;margin:7px 0 0;padding-left:20px">${det}</ul>
+    <div style="margin-top:10px"><button class="btn btn-primary btn-sm" onclick="crearCuentasFaltantes()">Crear las cuentas que faltan</button></div>
+  </div>`;
+}
+const CTAS_SUGERIDAS={
+  "1100":{name:"Cuentas por Cobrar",type:"asset",group:"receivable"},
+  "2100":{name:"IVU Estatal 10.5% por Remitir",type:"liability",group:"ivu"},
+  "2110":{name:"IVU Municipal 1% por Remitir",type:"liability",group:"ivu"},
+  "2120":{name:"IVU Especial 4% B2B por Remitir",type:"liability",group:"ivu"},
+  "2350":{name:"Adelanto Comercial (MCA) por Pagar",type:"liability",group:"loan"},
+  "3200":{name:"Retiros del Dueño",type:"equity",group:"equity"},
+  "5250":{name:"Intereses y Costo de Financiamiento",type:"expense",group:"op"},
+};
+async function crearCuentasFaltantes(){
+  const f=cuentasInexistentes();
+  if(!f.length)return toast("No falta ninguna cuenta");
+  let n=0;
+  f.forEach(c=>{
+    const s=CTAS_SUGERIDAS[c]||{name:`Cuenta ${c} (revisar nombre y tipo)`,type:"expense",group:"op"};
+    S.coa=[...S.coa,{code:c,...s}];n++;
+  });
+  S.coa.sort((a,b)=>String(a.code).localeCompare(String(b.code)));
+  await saveCoa();renderContent();
+  toast(`✅ ${n} cuenta${n===1?"":"s"} creada${n===1?"":"s"} — revisa el nombre y el tipo en Plan de Cuentas`);
+}
+
 function cuentasFacturadas(){
   const s=new Set();
   facturasDelAnio().forEach(f=>{
@@ -3105,7 +3164,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.18"; //@build
+const BUILD="2026-09-16.19"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
