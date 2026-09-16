@@ -470,15 +470,15 @@ async function loadCompanies(){
 function buildCompanySelect(){
   const sel=document.getElementById("company-select");
   if(!sel)return;
-  const multi=(S.companies||[]).length>1;
   const blk=document.getElementById("company-block");
-  if(blk)blk.style.display=multi?"block":"none";
+  if(blk)blk.style.display="block";   // siempre visible: si no se ve, no existe
   sel.innerHTML=(S.companies||[]).map(c=>
     `<option value="${c.id}" ${c.id===S.companyId?"selected":""}>${escHtml(c.icon||"🏢")} ${escHtml(c.name)}</option>`
-  ).join("");
+  ).join("")+`<option value="__new__">➕ Añadir empresa…</option>`;
 }
 
 async function switchCompany(id){
+  if(id==="__new__"){buildCompanySelect();showCompanyModal(-1);return;}  // devuelve el select a la empresa activa y abre el alta
   if(id===S.companyId)return;
   const c=(S.companies||[]).find(x=>x.id===id);
   if(!c)return;
