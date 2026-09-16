@@ -420,6 +420,7 @@ const TABS=[
   {id:"products",icon:"📦",label:"Productos",s:"ventas",fact:1},
   {id:"cobros",icon:"💵",label:"Cobros",s:"ventas",fact:1},
   {id:"txns",icon:"💳",label:"Transacciones",s:"datos"},
+  {id:"cuadre",icon:"⚖️",label:"Cuadre utilidad/caja",s:"datos"},
   {id:"reconcile",icon:"🔗",label:"Conciliación",s:"datos"},
   {id:"transfers",icon:"🔄",label:"Transferencias",s:"datos"},
   {id:"accounts",icon:"🏦",label:"Cuentas",s:"datos"},
@@ -953,7 +954,12 @@ function renderDashboard(){
   const topInc=Object.entries(incMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const recent=[...txs].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
   const qRows=QUARTERS.map(q=>{const qi=q.months.reduce((s,m)=>s+ingresoTotal(m),0);const qe=q.months.reduce((s,m)=>s+gastoTotal(m),0);return`<tr><td style="color:var(--muted)">${q.label}</td><td style="color:#10b981;text-align:right">${qi>0?fmt(qi):"—"}</td><td style="color:#ef4444;text-align:right">${qe>0?fmt(qe):"—"}</td><td style="text-align:right;color:${(qi-qe)>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(qi-qe)}</td></tr>`;}).join("");
-  return avisoDobleConteo()+avisoCuentasInexistentes()+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Bruta</div><div class="kpi-val" style="color:#10b981">${fmt(utilidadBruta())}</div><div class="kpi-sub">Margen bruto ${margenBruto().toFixed(1)}% · costo ${fmt(costoVentas())}</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
+  const _q=cuadreResultadoCaja();
+  const _avisoCaja=Math.abs(_q.transf)>1000?`<div class="card" style="margin-bottom:14px;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)">
+    <div style="font-size:12.5px;font-weight:600;color:var(--red);margin-bottom:6px">⚠️ Esta utilidad está incompleta</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.75">Salieron <strong>${fmt(Math.abs(_q.transf))}</strong> netos hacia cuentas que no están cargadas en la app. Los gastos pagados desde ahí no están en estos números, así que la utilidad es una <strong>cota máxima</strong>.</div>
+    <div style="margin-top:9px"><button class="btn btn-ghost btn-sm" onclick="goTab('cuadre')">Ver el cuadre completo →</button></div></div>`:"";
+  return avisoDobleConteo()+avisoCuentasInexistentes()+_avisoCaja+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Bruta</div><div class="kpi-val" style="color:#10b981">${fmt(utilidadBruta())}</div><div class="kpi-sub">Margen bruto ${margenBruto().toFixed(1)}% · costo ${fmt(costoVentas())}</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:2;min-width:260px"><div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span>Ingresos vs Gastos · ${S.year}</span><div style="display:flex;gap:10px;font-size:10px;color:var(--muted)"><span><span style="display:inline-block;width:8px;height:8px;background:#10b981;border-radius:2px;margin-right:3px"></span>Ing</span><span><span style="display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:2px;margin-right:3px"></span>Gas</span></div></div><div class="chart-wrap">${svg}</div></div><div class="card" style="flex:1;min-width:180px"><div class="section-title">Por Trimestre</div><table style="font-size:11px"><thead><tr><th>Q</th><th style="text-align:right">Ing</th><th style="text-align:right">Gas</th><th style="text-align:right">Neto</th></tr></thead><tbody>${qRows}</tbody></table></div></div>
   ${(()=>{const sg=salidasNoGasto();const tot=Object.values(sg).reduce((a,b)=>a+b,0);if(tot<0.01)return "";
   return `<div class="card" style="margin-bottom:18px"><div class="section-title">Salidas que no son gasto · ${fmt(tot)}</div>
@@ -3065,6 +3071,96 @@ async function importarPagos(){
   PIMP=null;closeModal();updateSidebar();renderContent();
   toast(`✅ ${nC} cobros importados en ${nF} facturas`);
 }
+// ═══ CUADRE: la utilidad contra el dinero que de verdad se movió ═══
+// Si la utilidad dice una cosa y el banco dice otra, la diferencia tiene
+// que poder explicarse partida por partida. Lo que no se explica, se señala.
+function movimientoNetoBanco(){
+  return S.txns.reduce((s,t)=>s+t.amount,0);
+}
+function transferenciasNetas(){
+  return S.txns.filter(t=>t.kind==="transfer").reduce((s,t)=>s+t.amount,0);
+}
+function salidasPasivo(){
+  // Pagos de IVU, préstamos y retiros: salen de caja pero no son gasto
+  const sg=salidasNoGasto();
+  return Object.values(sg).reduce((a,b)=>a+b,0);
+}
+function entradasPasivo(){
+  // Préstamos recibidos: entran a caja pero no son ingreso
+  return S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&(()=>{
+    const c=S.coa.find(x=>x.code===t.coaCode);return c&&c.type!=="revenue"&&c.type!=="asset";
+  })()).reduce((s,t)=>s+t.amount,0);
+}
+function cobrosDelAnio(){
+  return todosLosCobros().reduce((s,c)=>s+(Number(c.monto)||0),0);
+}
+function cuadreResultadoCaja(){
+  const utilidad=ingresoTotal()-gastoTotal();
+  const banco=movimientoNetoBanco();
+  const transf=transferenciasNetas();
+  const pasivoOut=salidasPasivo();
+  const pasivoIn=entradasPasivo();
+  const facturado=ingresoTotal();
+  const cobrado=cobrosDelAnio();
+  const noCobrado=facturado-cobrado;   // ventas facturadas que aún no entraron (aprox)
+  // Punto de partida: utilidad. Se le quita lo facturado y no cobrado,
+  // se le quitan las salidas que no son gasto, se le suman las entradas que no son ingreso,
+  // y se le quitan las transferencias netas a cuentas que no están en la app.
+  const esperado=utilidad-noCobrado-pasivoOut+pasivoIn+transf;
+  return {utilidad,banco,transf,pasivoOut,pasivoIn,facturado,cobrado,noCobrado,
+          esperado,sinExplicar:Math.round((banco-esperado)*100)/100};
+}
+function destinoTransferencias(){
+  const map={};
+  S.txns.filter(t=>t.kind==="transfer").forEach(t=>{
+    const k=(t.description||"otras").replace(/X{3,}\S*/g,"").replace(/ON \d\d\/\d\d\/\d\d.*/,"")
+      .replace(/\d+/g,"").replace(/\s+/g," ").trim().slice(0,40)||"otras";
+    map[k]=(map[k]||0)+t.amount;
+  });
+  return map;
+}
+function renderCuadre(){
+  const q=cuadreResultadoCaja();
+  const dest=destinoTransferencias();
+  const salidas=Object.entries(dest).filter(([,v])=>v<-0.005).sort((a,b)=>a[1]-b[1]);
+  const entradas=Object.entries(dest).filter(([,v])=>v>0.005).sort((a,b)=>b[1]-a[1]);
+  const fila=(lbl,val,nota,fuerte)=>`<tr>
+    <td style="${fuerte?"font-weight:600":"color:var(--muted)"};padding:5px 0">${lbl}${nota?`<div style="font-size:10px;color:var(--muted);font-weight:400;line-height:1.5;margin-top:2px">${nota}</div>`:""}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums;${fuerte?"font-weight:600":""};white-space:nowrap;padding:5px 0">${fmt(val)}</td></tr>`;
+  const grave=Math.abs(q.transf)>1000;
+  return `<div style="max-width:880px">
+  <div style="font-size:15px;font-weight:600;margin-bottom:5px">Cuadre · utilidad contra caja · ${S.year}</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Si la utilidad no se parece al dinero que se movió, la diferencia tiene que poder explicarse. Lo que no se explica aparece al final.</div>
+
+  <div class="card" style="margin-bottom:16px">
+    <table style="font-size:13px;width:100%">
+      ${fila("Utilidad neta según el Estado de Resultados",q.utilidad,"",1)}
+      ${fila("− Facturado que todavía no se ha cobrado",-q.noCobrado,`Facturado ${fmt(q.facturado)} · cobrado ${fmt(q.cobrado)}`)}
+      ${fila("− Salidas que no son gasto",-q.pasivoOut,"Pago del préstamo, remisión de IVU, retiros")}
+      ${fila("+ Entradas que no son ingreso",q.pasivoIn,"Préstamos recibidos")}
+      ${fila("+ Transferencias netas a otras cuentas",q.transf,"Dinero movido a cuentas que no están cargadas en la app")}
+      <tr><td style="font-weight:600;padding:8px 0;border-top:1px solid var(--border)">= Movimiento de caja que debería verse</td><td style="text-align:right;font-weight:600;border-top:1px solid var(--border);padding:8px 0;font-variant-numeric:tabular-nums">${fmt(q.esperado)}</td></tr>
+      ${fila("Movimiento real del banco",q.banco,"Suma de todas las transacciones cargadas",1)}
+      <tr><td style="font-weight:600;padding:8px 0;border-top:1.5px solid var(--border);color:${Math.abs(q.sinExplicar)>500?"var(--red)":"#10b981"}">Sin explicar</td><td style="text-align:right;font-weight:600;border-top:1.5px solid var(--border);padding:8px 0;font-variant-numeric:tabular-nums;color:${Math.abs(q.sinExplicar)>500?"var(--red)":"#10b981"}">${fmt(q.sinExplicar)}</td></tr>
+    </table>
+  </div>
+
+  ${grave?`<div class="card" style="margin-bottom:16px;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)">
+    <div style="font-size:12.5px;font-weight:600;color:var(--red);margin-bottom:6px">⚠️ Faltan cuentas por cargar</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.75">
+      Salieron <strong>${fmt(Math.abs(q.transf))}</strong> netos hacia cuentas que no están en la app. Todo lo que se haya gastado desde ahí <strong>no aparece en tu Estado de Resultados</strong>, así que la utilidad que ves está inflada por esa cantidad — en el peor caso, entera.
+      <br>Hasta cargar esas cuentas, la utilidad de ${S.year} es una <strong>cota máxima</strong>, no un resultado.
+    </div>
+  </div>`:""}
+
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    ${salidas.length?`<div class="card" style="flex:1;min-width:280px"><div class="section-title">Dinero que salió a otras cuentas</div>
+    <table style="font-size:12px"><tbody>${salidas.map(([k,v])=>`<tr><td>${escHtml(k)}</td><td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--red)">${fmt(v)}</td></tr>`).join("")}</tbody></table></div>`:""}
+    ${entradas.length?`<div class="card" style="flex:1;min-width:280px"><div class="section-title">Dinero que volvió de otras cuentas</div>
+    <table style="font-size:12px"><tbody>${entradas.map(([k,v])=>`<tr><td>${escHtml(k)}</td><td style="text-align:right;font-variant-numeric:tabular-nums;color:#10b981">${fmt(v)}</td></tr>`).join("")}</tbody></table></div>`:""}
+  </div>
+  </div>`;
+}
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
 function taxQuarters(){
   return QUARTERS.map(q=>{
@@ -3492,7 +3588,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.22"; //@build
+const BUILD="2026-09-16.23"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -3698,7 +3794,7 @@ function renderIvu(){
 
 function renderContent(){
   const el=document.getElementById("content");
-  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,txns:renderTxns,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
+  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,txns:renderTxns,cuadre:renderCuadre,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
   const banner=(S.tab==="settings")?"":taxAlertBanner();
   el.innerHTML=banner+(map[S.tab]||renderDashboard)();
 }
