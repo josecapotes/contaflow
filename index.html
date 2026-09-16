@@ -1089,7 +1089,7 @@ function renderCashflow(){
 
 function renderTaxes(){
   const txs=S.txns;
-  if((S.settings.taxProfile||"fl-llc")==="pr-ivu")return renderIvu();
+  if((S.settings.taxProfile||"fl-llc")==="pr-ivu")return modoFacturacion()==="factura"?renderIvuFacturado():renderIvu();
   if((S.settings.taxProfile||"fl-llc")!=="fl-llc"){
     const co=activeCompany();
     const neto=txs.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
@@ -2100,26 +2100,6 @@ function verFactura(id){
     </div>
   </div>`);
 }
-function registrarCobro(id){
-  const f=(S.invoices||[]).find(x=>x.id===id);if(!f)return;
-  const b=balanceFactura(f);
-  openModal(`<div class="modal" style="max-width:440px">
-    <div class="modal-title">Registrar cobro</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${escHtml(f.numero)} · ${escHtml(nombreCliente(f.clienteId))} · balance ${fmt(b)}</div>
-    <div class="input-row"><div style="flex:1"><label>Monto *</label><input type="number" step="0.01" id="co-monto" style="width:100%" value="${b.toFixed(2)}"></div>
-    <div style="flex:1"><label>Fecha</label><input type="date" id="co-fecha" style="width:100%" value="${new Date().toISOString().slice(0,10)}"></div></div>
-    <div style="font-size:10.5px;color:var(--muted);margin-top:8px">El cobro reduce el balance de la factura. No crea un ingreso — el ingreso ya se reconoció al emitirla.</div>
-    <div class="modal-footer"><button class="btn btn-ghost" onclick="verFactura('${id}')">Volver</button><button class="btn btn-primary" onclick="guardarCobro('${id}')">Guardar cobro</button></div>
-  </div>`);
-}
-async function guardarCobro(id){
-  const m=Number((document.getElementById("co-monto")||{}).value)||0;
-  if(m<=0)return toast("⚠️ El monto debe ser mayor que cero");
-  const fe=(document.getElementById("co-fecha")||{}).value||new Date().toISOString().slice(0,10);
-  S.invoices=(S.invoices||[]).map(f=>f.id!==id?f:{...f,cobrado:Math.round(((Number(f.cobrado)||0)+m)*100)/100,
-    cobros:[...(f.cobros||[]),{fecha:fe,monto:m}]});
-  await saveInvoices();closeModal();renderContent();toast(`✅ Cobro de ${fmt(m)} registrado`);
-}
 async function anularFactura(id){
   const motivo=prompt("Motivo de la anulación (queda en el registro):");
   if(motivo===null)return;
@@ -2190,6 +2170,153 @@ function exportInvoicesCsv(){
     csv+=`${f.numero||""},${f.fecha},${f.vence||""},"${(c.name||"").replace(/"/g,'""')}",${(TIPOS_CLIENTE[c.tipo]||{}).label||""},${t.subtotal},${t.ivuEstatal},${t.ivuMunicipal},${t.ivuEspecial},${t.total},${Number(f.cobrado)||0},${balanceFactura(f)},${estadoFactura(f)}\n`;
   });
   downloadFile(`Facturas_${S.year}.csv`,csv,"text/csv");
+}
+
+// ══ COBROS: método, comisión y neto al banco ══
+const METODOS={
+  stripe:{label:"Stripe",comision:0.029,fija:0.30,nota:"2.9% + $0.30 típico"},
+  ath:{label:"ATH Móvil Business",comision:0.0195,fija:0,nota:"~1.95%"},
+  tarjeta:{label:"Tarjeta (otro procesador)",comision:0.029,fija:0.30,nota:"ajusta según tu contrato"},
+  efectivo:{label:"Efectivo",comision:0,fija:0,nota:"sin comisión"},
+  cheque:{label:"Cheque",comision:0,fija:0,nota:"sin comisión"},
+  cheque_bancario:{label:"Cheque bancario / gerente",comision:0,fija:0,nota:"sin comisión"},
+  transferencia:{label:"Transferencia / ACH",comision:0,fija:0,nota:"sin comisión"},
+};
+function comisionSugerida(metodo,monto){
+  const m=METODOS[metodo];if(!m)return 0;
+  return Math.round((monto*m.comision+m.fija)*100)/100;
+}
+function cobrosDe(f){return (f.cobros||[])}
+function totalComisiones(anio){
+  return (S.invoices||[]).filter(f=>!["borrador","anulada"].includes(estadoFactura(f)))
+    .flatMap(cobrosDe).filter(c=>String(c.fecha||"").startsWith(String(anio||S.year)))
+    .reduce((s,c)=>s+(Number(c.comision)||0),0);
+}
+function registrarCobro(id){
+  const f=(S.invoices||[]).find(x=>x.id===id);if(!f)return;
+  const b=balanceFactura(f);
+  const cuentas=S.bankAccounts||[];
+  openModal(`<div class="modal" style="max-width:520px">
+    <div class="modal-title">Registrar cobro</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${escHtml(f.numero)} · ${escHtml(nombreCliente(f.clienteId))} · balance <strong>${fmt(b)}</strong></div>
+    <div class="input-row">
+      <div style="flex:1"><label>Monto cobrado *</label><input type="number" step="0.01" id="co-monto" style="width:100%" value="${b.toFixed(2)}" oninput="sugerirComision()"></div>
+      <div style="flex:1"><label>Fecha *</label><input type="date" id="co-fecha" style="width:100%" value="${new Date().toISOString().slice(0,10)}"></div>
+    </div>
+    <div class="input-row" style="margin-top:8px">
+      <div style="flex:1"><label>Método *</label><select id="co-metodo" style="width:100%" onchange="sugerirComision()">${Object.entries(METODOS).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join("")}</select></div>
+      <div style="flex:1"><label>Comisión retenida</label><input type="number" step="0.01" id="co-comision" style="width:100%" value="0"></div>
+    </div>
+    <div id="co-hint" style="font-size:10.5px;color:var(--muted);margin-top:6px"></div>
+    ${cuentas.length?`<div class="input-row" style="margin-top:8px"><div style="flex:1"><label>Entró a la cuenta</label><select id="co-cuenta" style="width:100%"><option value="">— sin especificar —</option>${cuentas.map(a=>`<option value="${a.id}">${escHtml(a.name)}</option>`).join("")}</select></div></div>`:""}
+    <div id="co-neto" style="margin-top:12px;padding:10px 13px;border-radius:7px;background:rgba(16,185,129,.08);font-size:12px"></div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.6">El cobro reduce el balance de la factura. <strong>No crea un ingreso</strong> — el ingreso y el IVU se reconocieron al emitir. La comisión sí es un gasto deducible del período del cobro.</div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="verFactura('${id}')">Volver</button><button class="btn btn-primary" onclick="guardarCobro('${id}')">Guardar cobro</button></div>
+  </div>`);
+  sugerirComision();
+}
+function sugerirComision(){
+  const gm=k=>(document.getElementById(k)||{});
+  const monto=Number(gm("co-monto").value)||0;
+  const met=gm("co-metodo").value||"efectivo";
+  const sug=comisionSugerida(met,monto);
+  const ci=gm("co-comision");
+  if(ci&&!ci.dataset.tocado)ci.value=sug.toFixed(2);
+  if(ci&&!ci.dataset.enlazado){ci.dataset.enlazado="1";ci.addEventListener("input",()=>{ci.dataset.tocado="1";pintarNeto()})}
+  const h=document.getElementById("co-hint");
+  if(h)h.textContent=`${METODOS[met].label} — ${METODOS[met].nota}. Sugerido: ${fmt(sug)}. Ajústalo si tu contrato es distinto.`;
+  pintarNeto();
+}
+function pintarNeto(){
+  const monto=Number((document.getElementById("co-monto")||{}).value)||0;
+  const com=Number((document.getElementById("co-comision")||{}).value)||0;
+  const el=document.getElementById("co-neto");
+  if(el)el.innerHTML=`Cobrado <strong>${fmt(monto)}</strong> · comisión <strong>${fmt(com)}</strong> · <strong style="color:#10b981">entra al banco ${fmt(monto-com)}</strong>`;
+}
+async function guardarCobro(id){
+  const m=Number((document.getElementById("co-monto")||{}).value)||0;
+  if(m<=0)return toast("⚠️ El monto debe ser mayor que cero");
+  const f=(S.invoices||[]).find(x=>x.id===id);if(!f)return;
+  const b=balanceFactura(f);
+  if(m>b+0.005)return toast(`⚠️ El cobro (${fmt(m)}) excede el balance (${fmt(b)})`);
+  const com=Number((document.getElementById("co-comision")||{}).value)||0;
+  if(com>=m)return toast("⚠️ La comisión no puede ser mayor o igual al cobro");
+  const cobro={fecha:(document.getElementById("co-fecha")||{}).value||new Date().toISOString().slice(0,10),
+    monto:m,metodo:(document.getElementById("co-metodo")||{}).value||"efectivo",comision:com,
+    cuentaId:(document.getElementById("co-cuenta")||{}).value||"",neto:Math.round((m-com)*100)/100};
+  S.invoices=(S.invoices||[]).map(x=>x.id!==id?x:{...x,cobrado:Math.round(((Number(x.cobrado)||0)+m)*100)/100,cobros:[...(x.cobros||[]),cobro]});
+  await saveInvoices();closeModal();renderContent();
+  toast(`✅ Cobro de ${fmt(m)} · ${fmt(m-com)} al banco${com?` · ${fmt(com)} de comisión`:""}`);
+}
+
+// ══ LIQUIDACIÓN DE IVU: devengado vs remitido, por cuenta ══
+const CTA_IVU_ESTATAL="2100", CTA_IVU_MUNICIPAL="2110", CTA_IVU_ESPECIAL="2120";
+function ivuRemitido(mes){
+  // Pagos a Hacienda registrados contra las cuentas de pasivo de IVU
+  const ctas=[CTA_IVU_ESTATAL,CTA_IVU_MUNICIPAL,CTA_IVU_ESPECIAL];
+  return S.txns.filter(t=>t.kind!=="transfer"&&ctas.includes(t.coaCode)&&t.amount<0
+      &&(mes===undefined||(+String(t.date).slice(5,7)-1)===mes))
+    .reduce((s,t)=>s+Math.abs(t.amount),0);
+}
+function renderIvuFacturado(){
+  const r=ivuRates(), co=activeCompany(), hoy=new Date().toISOString().slice(0,10);
+  const an=ivuDevengado();
+  const remAn=ivuRemitido();
+  const filas=[];
+  for(let m=0;m<12;m++){
+    const d=ivuDevengado(m);
+    const rem=ivuRemitido(m);
+    if(!d.facturas&&!rem)continue;
+    const vence=ivuVencimiento(S.year,m);
+    const pend=Math.round((d.total-rem)*100)/100;
+    const vencido=vence<hoy&&pend>0.005;
+    filas.push(`<tr>
+      <td style="color:var(--muted)">${MONTHS[m]}</td>
+      <td style="text-align:right;color:var(--muted)">${d.facturas||"—"}</td>
+      <td style="text-align:right">${fmt(d.general)}</td>
+      <td style="text-align:right">${d.b2b?fmt(d.b2b):"—"}</td>
+      <td style="text-align:right;color:var(--muted)">${d.exento?fmt(d.exento):"—"}</td>
+      <td style="text-align:right">${d.estatal?fmt(d.estatal):"—"}</td>
+      <td style="text-align:right">${d.municipal?fmt(d.municipal):"—"}</td>
+      <td style="text-align:right">${d.especial?fmt(d.especial):"—"}</td>
+      <td style="text-align:right;font-weight:600">${fmt(d.total)}</td>
+      <td style="text-align:right;color:#10b981">${rem?fmt(rem):"—"}</td>
+      <td style="text-align:right;font-weight:600;color:${pend>0.005?"var(--red)":"var(--muted)"}">${pend>0.005?fmt(pend):"✓"}</td>
+      <td><span class="tag ${vencido?"tag-red":"tag-gold"}" style="font-size:9.5px;white-space:nowrap">${vence}${vencido?" ⚠":""}</span></td>
+    </tr>`);
+  }
+  const pendAn=Math.round((an.total-remAn)*100)/100;
+  const com=totalComisiones();
+  return`<div style="max-width:1080px">
+  <div style="font-size:15px;font-weight:600;margin-bottom:5px">IVU · ${S.year}</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:14px">${escHtml(co.name)} · Planilla Mensual SC 2915 vía SURI · <strong>base de acumulación</strong>: el IVU nace al emitir la factura, no al cobrarla</div>
+
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card kpi"><div class="kpi-label">Ventas gravables</div><div class="kpi-val" style="color:#10b981">${fmt(an.baseGravable)}</div><div class="kpi-sub">${fmt(an.exento)} exentas aparte</div></div>
+    <div class="card kpi"><div class="kpi-label">IVU Estatal ${r.estatal}%</div><div class="kpi-val" style="color:var(--red)">${fmt(an.estatal)}</div><div class="kpi-sub">cuenta ${CTA_IVU_ESTATAL}</div></div>
+    <div class="card kpi"><div class="kpi-label">IVU Municipal ${r.municipal}%</div><div class="kpi-val" style="color:var(--red)">${fmt(an.municipal)}</div><div class="kpi-sub">cuenta ${CTA_IVU_MUNICIPAL}</div></div>
+    <div class="card kpi"><div class="kpi-label">Pendiente de remitir</div><div class="kpi-val" style="color:${pendAn>0.005?"var(--red)":"#10b981"}">${fmt(pendAn)}</div><div class="kpi-sub">${fmt(an.total)} devengado − ${fmt(remAn)} remitido</div></div>
+  </div>
+
+  ${an.especial?`<div class="card card-sm" style="margin-bottom:14px"><div style="font-size:12px">IVU Especial 4% B2B: <strong>${fmt(an.especial)}</strong> sobre ${fmt(an.b2b)} — cuenta ${CTA_IVU_ESPECIAL}. <span style="color:var(--muted)">El 4% no lleva municipal.</span></div></div>`:""}
+
+  ${filas.length?`<div class="card" style="padding:0;overflow-x:auto"><table style="font-size:12px"><thead><tr>
+    <th>Mes</th><th style="text-align:right">Fact.</th><th style="text-align:right">Gravable 11.5%</th><th style="text-align:right">B2B 4%</th><th style="text-align:right">Exento</th>
+    <th style="text-align:right">Estatal</th><th style="text-align:right">Municipal</th><th style="text-align:right">Especial</th><th style="text-align:right">Devengado</th>
+    <th style="text-align:right">Remitido</th><th style="text-align:right">Pendiente</th><th>Vence</th></tr></thead><tbody>${filas.join("")}</tbody></table></div>`
+  :`<div class="card" style="text-align:center;padding:36px"><div style="font-size:13px;color:var(--muted);line-height:1.8">Sin facturas emitidas en ${S.year}.<br>En base de factura el IVU se calcula desde las facturas, no desde el banco.</div></div>`}
+
+  <div class="card" style="margin-top:14px">
+    <div class="section-title">Cómo se registra el IVU</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.9">
+      <strong>Al emitir</strong> — el ingreso va a su cuenta <code>40xx</code> y el IVU cobrado al cliente queda como <strong>deuda</strong> en ${CTA_IVU_ESTATAL} (estatal) y ${CTA_IVU_MUNICIPAL} (municipal). No es tu dinero: lo estás guardando para Hacienda.<br>
+      <strong>Al cobrar</strong> — entra al banco el neto y la comisión se registra como gasto. El balance de la factura baja. El IVU no se toca, porque ya se reconoció.<br>
+      <strong>Al remitir</strong> — el pago a Hacienda se categoriza contra ${CTA_IVU_ESTATAL} y ${CTA_IVU_MUNICIPAL}, y así la deuda baja. Es lo que alimenta la columna «Remitido».
+    </div>
+  </div>
+
+  ${com?`<div class="card" style="margin-top:12px"><div style="font-size:12px">Comisiones de procesamiento cobradas en ${S.year}: <strong>${fmt(com)}</strong> <span style="color:var(--muted)">— gasto deducible que sale de los cobros, no del IVU</span></div></div>`:""}
+  </div>`;
 }
 
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
@@ -2618,7 +2745,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.13"; //@build
+const BUILD="2026-09-16.14"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
