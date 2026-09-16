@@ -619,8 +619,6 @@ function showCompanyModal(idx){
     </div>
     <label style="margin-top:8px">Instrucciones de pago (salen en la factura)</label>
     <input id="co-pago" style="width:100%" value="${escHtml(c.instruccionesPago||"")}" placeholder="Ej: ATH Móvil 787-000-0000 · Transferencia Banco Popular">
-    <select style="display:none"
-    </select>
     <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.7">⚠️ Cada perfil aplica reglas distintas: Florida usa SE Tax y Form 1040-ES; Puerto Rico usa IVU con planilla mensual SC 2915. <strong>No mezcles perfiles entre jurisdicciones.</strong> Las tasas del IVU se ajustan en Configuración.</div>
     ${esLegacy?'<div style="font-size:10.5px;color:#f59e0b;margin-top:8px;line-height:1.6">Esta es tu empresa original. Sus datos viven en las claves originales y no se pueden mover — puedes renombrarla sin problema.</div>':""}
     <div class="modal-footer">
@@ -2969,7 +2967,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.16"; //@build
+const BUILD="2026-09-16.17"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
