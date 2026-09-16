@@ -1128,6 +1128,25 @@ async function deleteTx(id){S.txns=S.txns.filter(t=>t.id!==id);await saveTxns();
 
 // ═══ CONCILIACIÓN BANCARIA ═══
 let RECON={rows:[],matched:[],missing:[],unbacked:[],analyzed:false,accountId:""};
+function parseCSVRecords(text){
+  const t=String(text||"").replace(/^\uFEFF/,"");
+  const recs=[];let row=[],cur="",inQ=false;
+  for(let i=0;i<t.length;i++){
+    const ch=t[i];
+    if(inQ){
+      if(ch==='"'){ if(t[i+1]==='"'){cur+='"';i++} else inQ=false }
+      else cur+=ch;                       // aqui entran los saltos de linea del campo
+    }else{
+      if(ch==='"')inQ=true;
+      else if(ch===","){row.push(cur);cur=""}
+      else if(ch==="\n"){row.push(cur);cur="";recs.push(row);row=[]}
+      else if(ch==="\r"){/* se ignora: \r\n */}
+      else cur+=ch;
+    }
+  }
+  if(cur!==""||row.length){row.push(cur);recs.push(row)}
+  return recs.filter(r=>r.some(c=>String(c).trim()!==""));
+}
 function parseCSVLine(line){
   const out=[];let cur="",inQ=false;
   for(let i=0;i<line.length;i++){const ch=line[i];
@@ -1204,10 +1223,10 @@ function toISODate(raw,fmt){
 }
 const BAD_STATUS=/^\s*(failed|fallida|cancel|anulad|rechaz|pending|pendiente)/i;
 function parseCsvTable(text){
-  const lines=String(text||"").split(/\r?\n/).filter(l=>l.trim());
-  if(lines.length<2)return null;
-  const hdr=parseCSVLine(lines[0]).map(h=>h.trim());
-  const cells=lines.slice(1).map(parseCSVLine).filter(c=>c.length>1);
+  const recs=parseCSVRecords(text);
+  if(recs.length<2)return null;
+  const hdr=recs[0].map(h=>String(h).trim());
+  const cells=recs.slice(1).filter(c=>c.length>1);
   if(!cells.length)return null;
   const taken=[];
   const pick=k=>{const i=guessCol(hdr,CSV_SYN[k],taken);if(i>=0)taken.push(i);return i};
@@ -1526,6 +1545,12 @@ function showModal(type){
   <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer"><input type="checkbox" id="recat-todas" onchange="showRecat()"> También las que ya tienen una cuenta asignada <span style="opacity:.6">(pisa tus correcciones)</span></label>
   <div id="recat-preview"></div>
   <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button></div></div>`;
+  if(type==="import-zoho")html=`<div class="modal" style="max-width:760px"><div class="modal-title">Importar facturas de Zoho Books</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">En Zoho Books: <strong>Ventas › Facturas › Exportar</strong> en CSV. Zoho manda una fila por línea de factura; aquí se reagrupan. El «IVU COMPUESTO» del 11.5% se <strong>separa en estatal 10.5% y municipal 1%</strong>, que es lo que Zoho no desglosa.</p>
+  <input type="file" id="z-file" accept=".csv,text/csv" style="margin-bottom:10px;font-size:12px" onchange="(function(inp){const f=inp.files&&inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{document.getElementById('z-text').value=e.target.result;analizarZoho()};r.readAsText(f)})(this)">
+  <textarea id="z-text" rows="4" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Invoice Date,Invoice ID,Invoice Number,..." oninput="ZIMP=null"></textarea>
+  <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="analizarZoho()">🔍 Analizar</button> <span style="font-size:10.5px;color:var(--muted)">Si exportaste el año en dos archivos, impórtalos uno tras otro.</span></div>
+  <div id="z-preview"></div>
+  <div class="modal-footer"><button class="btn btn-ghost" onclick="ZIMP=null;closeModal()">Cerrar</button></div></div>`;
   if(type==="import-customers")html=`<div class="modal" style="max-width:600px"><div class="modal-title">Importar clientes</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Pega un arreglo JSON. Se omiten los que ya existan por correo o por nombre.</p>
   <textarea id="imp-cli" rows="9" style="width:100%;resize:vertical;font-family:monospace;font-size:10.5px" placeholder='[{"name":"Novaesthetic LLC","email":"...","tipo":"consumidor"}]'></textarea>
   <div style="font-size:10px;color:var(--muted);margin-top:7px">Campos: <code>name</code> (obligatorio), <code>email</code>, <code>tel</code>, <code>tipo</code> (consumidor · b2b · revendedor), <code>certificado</code>, <code>municipio</code>.</div>
@@ -1944,7 +1969,7 @@ function renderInvoices(){
   return `<div style="max-width:1000px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap">
     <div><div style="font-size:15px;font-weight:600">Facturas · ${S.year}</div><div style="font-size:11px;color:var(--muted)">El IVU se calcula por línea y se congela al emitir</div></div>
-    <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" onclick="exportInvoicesCsv()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="nuevaFactura()">+ Nueva factura</button></div>
+    <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" onclick="showModal('import-zoho');setTimeout(()=>{const t=document.getElementById('z-text');if(t)t.focus()},40)">⬆️ Zoho Books</button><button class="btn btn-ghost btn-sm" onclick="exportInvoicesCsv()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="nuevaFactura()">+ Nueva factura</button></div>
   </div>
   <div class="grid" style="margin-bottom:16px">
     <div class="card kpi"><div class="kpi-label">Facturado</div><div class="kpi-val" style="color:#10b981">${fmt(facturado)}</div><div class="kpi-sub">${vivas.length} facturas emitidas</div></div>
@@ -2317,6 +2342,205 @@ function renderIvuFacturado(){
 
   ${com?`<div class="card" style="margin-top:12px"><div style="font-size:12px">Comisiones de procesamiento cobradas en ${S.year}: <strong>${fmt(com)}</strong> <span style="color:var(--muted)">— gasto deducible que sale de los cobros, no del IVU</span></div></div>`:""}
   </div>`;
+}
+
+// ══ IMPORTAR FACTURAS DE ZOHO BOOKS ══
+// Zoho exporta una fila por línea de factura, con la cabecera repetida.
+// El "IVU COMPUESTO" viene como grupo al 11.5% sin desglosar: aquí se separa
+// en estatal y municipal, que es lo que pide la planilla y el plan de cuentas.
+let ZIMP=null;
+function zohoCol(hdr,nombres){
+  const H=hdr.map(h=>csvNorm(h));
+  for(const n of nombres){const i=H.indexOf(csvNorm(n));if(i>=0)return i}
+  return -1;
+}
+function parseZoho(text){
+  const recs=parseCSVRecords(text);
+  if(recs.length<2)return null;
+  const hdr=recs[0].map(h=>String(h).trim());
+  const C={
+    num:zohoCol(hdr,["Invoice Number"]), fecha:zohoCol(hdr,["Invoice Date"]),
+    vence:zohoCol(hdr,["Due Date"]), estado:zohoCol(hdr,["Invoice Status"]),
+    cli:zohoCol(hdr,["Customer Name"]), email:zohoCol(hdr,["Primary Contact EmailID"]),
+    tel:zohoCol(hdr,["Primary Contact Mobile","Primary Contact Phone"]),
+    ciudad:zohoCol(hdr,["Billing City"]),
+    sub:zohoCol(hdr,["SubTotal"]), tot:zohoCol(hdr,["Total"]), bal:zohoCol(hdr,["Balance"]),
+    inclusivo:zohoCol(hdr,["Is Inclusive Tax"]),
+    item:zohoCol(hdr,["Item Name"]), desc:zohoCol(hdr,["Item Desc"]),
+    cant:zohoCol(hdr,["Quantity"]), precio:zohoCol(hdr,["Item Price"]),
+    itot:zohoCol(hdr,["Item Total"]), tax:zohoCol(hdr,["Item Tax"]),
+    pct:zohoCol(hdr,["Item Tax %"]), tamt:zohoCol(hdr,["Item Tax Amount"]),
+  };
+  if(C.num<0||C.fecha<0||C.itot<0)return null;
+  const V=(c,i)=>C[i]>=0?(c[C[i]]||""):"";
+  const mapa=new Map();
+  recs.slice(1).forEach(c=>{
+    if(c.length<3)return;
+    const num=V(c,"num").trim();
+    if(!num)return;
+    let f=mapa.get(num);
+    if(!f){
+      f={numero:num,fecha:V(c,"fecha").slice(0,10),vence:V(c,"vence").slice(0,10),
+         estadoZoho:V(c,"estado").trim(),cliente:V(c,"cli").replace(/\s+/g," ").trim(),
+         email:V(c,"email").trim(),tel:V(c,"tel").trim(),ciudad:V(c,"ciudad").trim(),
+         subZoho:parseAmount(V(c,"sub")),totZoho:parseAmount(V(c,"tot")),balZoho:parseAmount(V(c,"bal")),
+         inclusivo:/true|s[ií]|yes|1/i.test(V(c,"inclusivo")),lineas:[]};
+      mapa.set(num,f);
+    }
+    const itot=parseAmount(V(c,"itot"));
+    const cant=parseAmount(V(c,"cant"))||1;
+    const tax=V(c,"tax").trim();
+    const pct=parseAmount(V(c,"pct"));
+    // El precio se deriva del Item Total para respetar descuentos de línea
+    f.lineas.push({desc:(V(c,"item")||V(c,"desc")||"Concepto").trim(),cant,
+      precio:Math.round((itot/(cant||1))*10000)/10000,
+      ivu: tax ? (Math.abs(pct-4)<0.01?"4":"11.5") : "exento",
+      taxZoho:parseAmount(V(c,"tamt")), coaCode:""});
+  });
+  return [...mapa.values()];
+}
+const EST_ZOHO={Closed:"pagada",Paid:"pagada",Void:"anulada",Draft:"borrador",
+  Open:"emitida",Sent:"emitida",Overdue:"emitida",PartiallyPaid:"parcial","Partially Paid":"parcial"};
+function analizarZoho(){
+  const txt=(document.getElementById("z-text")||{}).value||"";
+  const arr=parseZoho(txt.trim());
+  const box=document.getElementById("z-preview");
+  if(!arr||!arr.length){
+    if(box)box.innerHTML=`<div style="font-size:11px;color:#f59e0b;padding:10px">❌ No reconocí el archivo. Debe ser el CSV de facturas de Zoho Books, con las columnas <code>Invoice Number</code>, <code>Invoice Date</code> e <code>Item Total</code>.</div>`;
+    return;
+  }
+  ZIMP={arr};
+  renderZohoPreview();
+}
+function renderZohoPreview(){
+  const box=document.getElementById("z-preview");if(!box||!ZIMP)return;
+  const ing=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
+  const defG=(document.getElementById("z-cta-grav")||{}).value||"";
+  const defE=(document.getElementById("z-cta-exen")||{}).value||"";
+  const yaExiste=new Set((S.invoices||[]).map(f=>String(f.numero)));
+  const delAnio=ZIMP.arr.filter(f=>String(f.fecha).startsWith(String(S.year)));
+  const nuevas=delAnio.filter(f=>!yaExiste.has(f.numero));
+  const dup=delAnio.length-nuevas.length;
+  const porEstado={};
+  nuevas.forEach(f=>{const e=EST_ZOHO[f.estadoZoho]||"emitida";porEstado[e]=(porEstado[e]||0)+1});
+  // totales solo de las que devengan
+  let sub=0,est=0,mun=0,esp=0,exe=0;
+  nuevas.forEach(f=>{
+    const e=EST_ZOHO[f.estadoZoho]||"emitida";
+    if(["borrador","anulada"].includes(e))return;
+    f.lineas.forEach(l=>{
+      const base=(Number(l.cant)||0)*(Number(l.precio)||0);
+      sub+=base;
+      if(l.ivu==="11.5"){est+=base*0.105;mun+=base*0.01}
+      else if(l.ivu==="4")esp+=base*0.04;
+      else exe+=base;
+    });
+  });
+  const cliNuevos=new Set();
+  const porNom=new Set((S.customers||[]).map(c=>(c.name||"").toLowerCase()));
+  const porMail=new Set((S.customers||[]).map(c=>(c.email||"").toLowerCase()).filter(Boolean));
+  nuevas.forEach(f=>{
+    if(!f.cliente)return;
+    if(porNom.has(f.cliente.toLowerCase()))return;
+    if(f.email&&porMail.has(f.email.toLowerCase()))return;
+    cliNuevos.add(f.cliente);
+  });
+  const inclusivas=nuevas.filter(f=>f.inclusivo).length;
+  const muestra=nuevas.slice(0,5).map(f=>{
+    const e=EST_ZOHO[f.estadoZoho]||"emitida";
+    return `<tr><td style="font-family:ui-monospace,monospace;font-size:11px">${escHtml(f.numero)}</td><td style="color:var(--muted);font-size:11px">${escHtml(f.fecha)}</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.cliente)}</td><td style="text-align:right">${f.lineas.length}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(f.totZoho)}</td><td><span class="tag" style="font-size:9px;background:${EST_COLOR[e]}22;color:${EST_COLOR[e]}">${e}</span></td></tr>`;
+  }).join("");
+  box.innerHTML=`
+  <div class="card card-sm" style="margin-top:12px">
+    <div class="section-title">1 · A qué cuenta va cada venta</div>
+    <div style="font-size:10.5px;color:var(--muted);margin-bottom:9px">Zoho las manda todas a una sola cuenta «Ventas». Aquí eliges el destino y luego las afinas factura por factura.</div>
+    <div class="input-row" style="flex-wrap:wrap;gap:8px">
+      <div style="flex:1;min-width:190px"><label>Líneas gravables</label><select id="z-cta-grav" style="width:100%" onchange="renderZohoPreview()"><option value="">— elegir —</option>${ing.map(c=>`<option value="${c.code}" ${defG===c.code?"selected":""}>${c.code} · ${escHtml(c.name)}</option>`).join("")}</select></div>
+      <div style="flex:1;min-width:190px"><label>Líneas exentas</label><select id="z-cta-exen" style="width:100%" onchange="renderZohoPreview()"><option value="">— elegir —</option>${ing.map(c=>`<option value="${c.code}" ${defE===c.code?"selected":""}>${c.code} · ${escHtml(c.name)}</option>`).join("")}</select></div>
+    </div>
+  </div>
+  <div class="card card-sm" style="margin-top:10px">
+    <div class="section-title">2 · Qué va a entrar</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;margin-bottom:10px">
+      <div>🧾 <strong>${nuevas.length}</strong> facturas de ${S.year}</div>
+      <div>👥 <strong>${cliNuevos.size}</strong> clientes nuevos</div>
+      ${dup?`<div style="color:var(--muted)">↻ ${dup} ya estaban</div>`:""}
+      ${delAnio.length!==ZIMP.arr.length?`<div style="color:var(--muted)">${ZIMP.arr.length-delAnio.length} de otros años</div>`:""}
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;margin-bottom:10px">
+      ${Object.entries(porEstado).map(([k,v])=>`<div><span class="tag" style="font-size:9px;background:${EST_COLOR[k]}22;color:${EST_COLOR[k]}">${k}</span> ${v}</div>`).join("")}
+    </div>
+    <table style="font-size:11.5px;width:100%;max-width:420px">
+      <tr><td style="color:var(--muted);padding:2px 0">Base sin IVU</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(sub)}</td></tr>
+      ${exe?`<tr><td style="color:var(--muted);padding:2px 0">— de eso, exento</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(exe)}</td></tr>`:""}
+      <tr><td style="color:var(--muted);padding:2px 0">IVU estatal 10.5% → cuenta ${CTA_IVU_ESTATAL}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(est)}</td></tr>
+      <tr><td style="color:var(--muted);padding:2px 0">IVU municipal 1% → cuenta ${CTA_IVU_MUNICIPAL}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(mun)}</td></tr>
+      ${esp?`<tr><td style="color:var(--muted);padding:2px 0">IVU especial 4% B2B → cuenta ${CTA_IVU_ESPECIAL}</td><td style="text-align:right">${fmt(esp)}</td></tr>`:""}
+      <tr><td style="font-weight:600;padding:5px 0;border-top:1px solid var(--border)">Total con IVU</td><td style="text-align:right;font-weight:600;border-top:1px solid var(--border)">${fmt(sub+est+mun+esp)}</td></tr>
+    </table>
+    ${inclusivas?`<div style="margin-top:9px;font-size:11px;color:#f59e0b">⚠️ ${inclusivas} factura(s) vienen marcadas con IVU incluido en el precio. Revísalas: el importador asume precio sin IVU, que es como Zoho exporta normalmente.</div>`:""}
+    ${nuevas.length?`<div style="overflow-x:auto;margin-top:10px"><table style="font-size:11.5px"><thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th><th style="text-align:right">Líneas</th><th style="text-align:right">Total Zoho</th><th>Estado</th></tr></thead><tbody>${muestra}</tbody></table></div>`:""}
+  </div>
+  <div style="margin-top:10px;font-size:10.5px;color:var(--muted);line-height:1.6">Las <strong>pagadas</strong> entran con su cobro ya aplicado y balance cero. Las <strong>anuladas</strong> se conservan anuladas, sin devengar IVU. Los <strong>borradores</strong> entran como borradores. Nada se duplica: si el número ya existe, se omite.</div>
+  <div style="margin-top:11px"><button class="btn btn-primary" onclick="importarZoho()" ${nuevas.length&&defG?"":"disabled"}>✅ Importar ${nuevas.length} facturas</button>${defG?"":`<span style="font-size:11px;color:#f59e0b;margin-left:9px">Elige primero la cuenta de las líneas gravables</span>`}</div>`;
+}
+async function importarZoho(){
+  if(!ZIMP)return toast("⚠️ Primero pega el CSV y analiza");
+  const defG=(document.getElementById("z-cta-grav")||{}).value||"";
+  const defE=(document.getElementById("z-cta-exen")||{}).value||defG;
+  if(!defG)return toast("⚠️ Elige la cuenta de las líneas gravables");
+  const yaExiste=new Set((S.invoices||[]).map(f=>String(f.numero)));
+  const nuevas=ZIMP.arr.filter(f=>String(f.fecha).startsWith(String(S.year))&&!yaExiste.has(f.numero));
+  if(!nuevas.length)return toast(`⚠️ Nada nuevo que importar para ${S.year}`);
+  // clientes
+  const idPorNom=new Map((S.customers||[]).map(c=>[(c.name||"").toLowerCase(),c.id]));
+  const idPorMail=new Map((S.customers||[]).map(c=>[(c.email||"").toLowerCase(),c.id]).filter(x=>x[0]));
+  let nCli=0;
+  nuevas.forEach(f=>{
+    if(!f.cliente)return;
+    if(idPorNom.has(f.cliente.toLowerCase()))return;
+    if(f.email&&idPorMail.has(f.email.toLowerCase()))return;
+    const c={id:`cli_${Date.now()}_${nCli}`,name:f.cliente,email:f.email||"",tel:f.tel||"",
+      tipo:"consumidor",certificado:"",municipio:f.ciudad||"",nota:"Importado de Zoho Books"};
+    S.customers=[...(S.customers||[]),c];
+    idPorNom.set(f.cliente.toLowerCase(),c.id);
+    if(f.email)idPorMail.set(f.email.toLowerCase(),c.id);
+    nCli++;
+  });
+  // facturas
+  const r=ivuRates();
+  let nFac=0;
+  nuevas.forEach((f,k)=>{
+    const estado=EST_ZOHO[f.estadoZoho]||"emitida";
+    const lineas=f.lineas.map(l=>({desc:l.desc,cant:l.cant,precio:l.precio,ivu:l.ivu,
+      coaCode:l.ivu==="exento"?defE:defG}));
+    const base={id:`inv_zoho_${Date.now()}_${k}`,numero:f.numero,
+      clienteId:idPorNom.get((f.cliente||"").toLowerCase())||"",
+      fecha:f.fecha,vence:f.vence||"",estado,lineas,nota:"Importada de Zoho Books",
+      tasas:{estatal:r.estatal,municipal:r.municipal,especial:r.especial},origen:"zoho"};
+    const t=calcFactura(base);
+    const pagada=estado==="pagada";
+    const cobrado=pagada?t.total:(estado==="parcial"?Math.max(0,Math.round((t.total-(Number(f.balZoho)||0))*100)/100):0);
+    S.invoices=[...(S.invoices||[]),{...base,...t,cobrado,
+      cobros:cobrado>0.005?[{fecha:f.fecha,monto:cobrado,metodo:"transferencia",comision:0,neto:cobrado,nota:"Cobro según Zoho Books — ajusta el método y la comisión"}]:[],
+      difZoho:Math.round((t.total-(Number(f.totZoho)||0))*100)/100}];
+    nFac++;
+  });
+  await saveCustomers();await saveInvoices();
+  ZIMP=null;closeModal();updateSidebar();renderContent();
+  toast(`✅ ${nFac} facturas y ${nCli} clientes importados de Zoho`);
+}
+function revisarDiferenciasZoho(){
+  const con=(S.invoices||[]).filter(f=>f.origen==="zoho"&&Math.abs(Number(f.difZoho)||0)>0.02);
+  if(!con.length)return toast("✅ Ninguna factura de Zoho difiere en más de 2¢");
+  openModal(`<div class="modal" style="max-width:620px">
+    <div class="modal-title">Facturas que no cuadran con Zoho</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">El total recalculado por ContaFlow difiere del total que trae Zoho. Suele ser cargos de envío, redondeo o descuentos a nivel de factura.</p>
+    <div style="overflow-x:auto;max-height:300px;overflow-y:auto"><table style="font-size:11.5px"><thead><tr><th>Número</th><th>Cliente</th><th style="text-align:right">Diferencia</th></tr></thead><tbody>
+    ${con.sort((a,b)=>Math.abs(b.difZoho)-Math.abs(a.difZoho)).map(f=>`<tr style="cursor:pointer" onclick="verFactura('${f.id}')"><td style="font-family:ui-monospace,monospace">${escHtml(f.numero)}</td><td>${escHtml(nombreCliente(f.clienteId))}</td><td style="text-align:right;font-weight:600;color:var(--red)">${fmt(f.difZoho)}</td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="closeModal()">Cerrar</button></div>
+  </div>`);
 }
 
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
@@ -2745,7 +2969,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.14"; //@build
+const BUILD="2026-09-16.16"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
