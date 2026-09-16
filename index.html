@@ -402,6 +402,9 @@ const TABS=[
   {id:"budget",icon:"🎯",label:"Presupuesto",s:"plan"},
   {id:"cashflow",icon:"💧",label:"Flujo de Caja",s:"plan"},
   {id:"taxes",icon:"🧾",label:"Impuestos",s:"plan"},
+  {id:"invoices",icon:"🧾",label:"Facturas",s:"ventas",fact:1},
+  {id:"customers",icon:"👥",label:"Clientes",s:"ventas",fact:1},
+  {id:"products",icon:"📦",label:"Productos",s:"ventas",fact:1},
   {id:"txns",icon:"💳",label:"Transacciones",s:"datos"},
   {id:"reconcile",icon:"🔗",label:"Conciliación",s:"datos"},
   {id:"transfers",icon:"🔄",label:"Transferencias",s:"datos"},
@@ -413,7 +416,7 @@ const TABS=[
 const MONTHS=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const TYPE_COLOR={revenue:"#10b981",expense:"#ef4444",asset:"#3b82f6",liability:"#8b5cf6",equity:"#f59e0b"};
 const QUARTERS=[{label:"Q1",months:[0,1,2]},{label:"Q2",months:[3,4,5]},{label:"Q3",months:[6,7,8]},{label:"Q4",months:[9,10,11]}];
-const SEC_LABELS={reportes:"📊 Reportes",plan:"📅 Planificación",datos:"📁 Datos",ia:"✨ IA",sistema:"⚙️ Sistema"};
+const SEC_LABELS={reportes:"📊 Reportes",plan:"📅 Planificación",ventas:"🧾 Ventas",datos:"📁 Datos",ia:"✨ IA",sistema:"⚙️ Sistema"};
 
 let S={
   tab:"dashboard",year:2025,
@@ -426,6 +429,7 @@ let S={
     {id:"mcredit",name:"Mercury Credit (Tarjeta)",bank:"Mercury",type:"credit",last4:"",color:"#8b5cf6",note:"Tarjeta de crédito empresarial — balance = deuda actual",openingBalance:0,openingDate:"2025-01-01"},
   ],
   years:[2025],txns:[],allTxns:{},budget:{},balanceEntries:[],aiMessages:[],projects:[],companies:[],companyId:"jsusa",
+  customers:[],products:[],invoices:[],
   filterSearch:"",filterCode:"",filterSign:"",
 };
 
@@ -548,6 +552,7 @@ async function switchCompany(id){
   await dbSetRaw("activeCompany",id);
   // estado limpio: nada de la empresa anterior puede quedarse colgado
   S.txns=[];S.allTxns={};S.budget={};S.balanceEntries=[];S.aiMessages=[];
+  S.customers=[];S.products=[];S.invoices=[];
   S.projects=[];S.years=[new Date().getFullYear()];S.filterSearch="";S.filterCode="";S.filterSign="";
   S.coa=DEFAULT_COA.map(x=>({...x}));
   S.bankAccounts=(id===LEGACY_CO)?DEFAULT_BANKS.map(x=>({...x})):[];
@@ -603,6 +608,19 @@ function showCompanyModal(idx){
       <option value="pr-ivu" ${(c.taxProfile||"none")==="pr-ivu"?"selected":""}>Puerto Rico — IVU (10.5% + 1% municipal, 4% B2B)</option>
       <option value="none" ${(c.taxProfile||"none")==="none"?"selected":""}>Sin configurar — no calcular impuestos</option>
     </select>
+    <label style="margin-top:10px">Cómo se registran los ingresos</label>
+    <select id="co-billing" style="width:100%">
+      <option value="caja" ${(c.billingMode||"caja")==="caja"?"selected":""}>Base de caja — se categorizan desde el banco</option>
+      <option value="factura" ${(c.billingMode||"caja")==="factura"?"selected":""}>Base de factura — solo desde facturas emitidas</option>
+    </select>
+    <div style="font-size:10px;color:var(--muted);margin-top:5px;line-height:1.6">En base de factura aparecen las pestañas de Facturas, Clientes y Productos, y el IVU se calcula sobre ventas devengadas. Los depósitos del banco pasan a ser cobros, no ingresos.</div>
+    <div class="input-row" style="margin-top:10px">
+      <div style="flex:1"><label>Registro de Comerciante</label><input id="co-registro" style="width:100%" value="${escHtml(c.registroComerciante||"")}" placeholder="Sale impreso en la factura"></div>
+    </div>
+    <label style="margin-top:8px">Instrucciones de pago (salen en la factura)</label>
+    <input id="co-pago" style="width:100%" value="${escHtml(c.instruccionesPago||"")}" placeholder="Ej: ATH Móvil 787-000-0000 · Transferencia Banco Popular">
+    <select style="display:none"
+    </select>
     <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.7">⚠️ Cada perfil aplica reglas distintas: Florida usa SE Tax y Form 1040-ES; Puerto Rico usa IVU con planilla mensual SC 2915. <strong>No mezcles perfiles entre jurisdicciones.</strong> Las tasas del IVU se ajustan en Configuración.</div>
     ${esLegacy?'<div style="font-size:10.5px;color:#f59e0b;margin-top:8px;line-height:1.6">Esta es tu empresa original. Sus datos viven en las claves originales y no se pueden mover — puedes renombrarla sin problema.</div>':""}
     <div class="modal-footer">
@@ -618,14 +636,20 @@ function showCompanyModal(idx){
 async function saveCompanyForm(idx){
   const name=document.getElementById("co-name").value.trim();
   if(!name)return toast("⚠️ Ponle un nombre");
+  const prev = idx>=0 ? S.companies[idx] : {};
+  const gv=(k,d="")=>{const e=document.getElementById(k);return e?e.value:d};
   const obj={
+    ...prev,                                  // conserva bankSync, invoicePrefix y todo lo demás
     id: idx>=0 ? S.companies[idx].id : `co_${Date.now()}`,
     name,
     entity:document.getElementById("co-entity").value.trim(),
     state:document.getElementById("co-state").value.trim(),
     icon:document.getElementById("co-icon").value||"🏢",
     color:document.getElementById("co-color").value,
-    taxProfile:document.getElementById("co-tax").value
+    taxProfile:document.getElementById("co-tax").value,
+    billingMode:gv("co-billing","caja")||"caja",
+    registroComerciante:gv("co-registro").trim(),
+    instruccionesPago:gv("co-pago").trim()
   };
   const nueva=idx<0;
   if(nueva)S.companies=[...S.companies,obj]; else S.companies[idx]=obj;
@@ -724,6 +748,9 @@ async function loadState(){
     const be=await dbGet("balanceEntries");if(be)S.balanceEntries=be;
     const ai=await dbGet("aiMessages");if(ai)S.aiMessages=ai;
     const ad=await dbGet("alertDismissed");if(ad)S.alertDismissed=ad;
+    const cu=await dbGet("customers");S.customers=cu||[];
+    const pr=await dbGet("products");S.products=pr||[];
+    const iv=await dbGet("invoices");S.invoices=iv||[];
     const pj=await dbGet("projects");S.projects=(pj&&pj.length)?pj:(S.companyId===LEGACY_CO?PROJECTS.map(p=>({...p})):[]);
     if(!S.years.includes(S.year))S.year=S.years[S.years.length-1]||new Date().getFullYear();
     for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
@@ -873,7 +900,7 @@ function emptyState(icon,title,sub){return`<div class="empty"><div class="empty-
 
 function buildNav(){
   const nav=document.getElementById("nav");let html="",last="";
-  TABS.forEach(t=>{if(t.s!==last){html+=`<div class="nav-section">${SEC_LABELS[t.s]||t.s}</div>`;last=t.s;}html+=`<button class="nav-btn ${S.tab===t.id?'active':''}" onclick="goTab('${t.id}')"><span class="icon">${t.icon}</span>${t.label}</button>`;});
+  TABS.filter(t=>!t.fact||modoFacturacion()==="factura").forEach(t=>{if(t.s!==last){html+=`<div class="nav-section">${SEC_LABELS[t.s]||t.s}</div>`;last=t.s;}html+=`<button class="nav-btn ${S.tab===t.id?'active':''}" onclick="goTab('${t.id}')"><span class="icon">${t.icon}</span>${t.label}</button>`;});
   nav.innerHTML=html;
 }
 function buildYearSelect(){const sel=document.getElementById("year-select");sel.innerHTML=S.years.map(y=>`<option value="${y}" ${y===S.year?"selected":""}>${y}</option>`).join("");}
@@ -1499,6 +1526,10 @@ function showModal(type){
   <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer"><input type="checkbox" id="recat-todas" onchange="showRecat()"> También las que ya tienen una cuenta asignada <span style="opacity:.6">(pisa tus correcciones)</span></label>
   <div id="recat-preview"></div>
   <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button></div></div>`;
+  if(type==="import-customers")html=`<div class="modal" style="max-width:600px"><div class="modal-title">Importar clientes</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Pega un arreglo JSON. Se omiten los que ya existan por correo o por nombre.</p>
+  <textarea id="imp-cli" rows="9" style="width:100%;resize:vertical;font-family:monospace;font-size:10.5px" placeholder='[{"name":"Novaesthetic LLC","email":"...","tipo":"consumidor"}]'></textarea>
+  <div style="font-size:10px;color:var(--muted);margin-top:7px">Campos: <code>name</code> (obligatorio), <code>email</code>, <code>tel</code>, <code>tipo</code> (consumidor · b2b · revendedor), <code>certificado</code>, <code>municipio</code>.</div>
+  <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="importCustomers()">Importar</button></div></div>`;
   if(type==="import-csv")html=`<div class="modal" style="max-width:720px"><div class="modal-title">Importar CSV bancario</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Sirve para <strong>cualquier banco</strong> (Mercury, Banco Popular, etc.). Selecciona el archivo o pega su contenido: detecto las columnas solo, pero puedes corregirlas y ver una vista previa antes de importar.</p>
   <input type="file" id="csv-file" accept=".csv,text/csv" style="margin-bottom:10px;font-size:12px" onchange="loadCsvFile(this)">
   <textarea id="csv-text" rows="5" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Date,Description,Amount" oninput="CSVIMP.t=null"></textarea>
@@ -1663,6 +1694,502 @@ async function aplicarRecat(){
   S.txns=copia;await saveTxns();
   closeModal();updateSidebar();renderContent();
   toast(`✅ ${cambios.length} recategorizadas${revs?` · ${revs} reversos emparejados`:""}`);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MÓDULO DE FACTURACIÓN — clientes, productos, facturas
+//  El IVU se calcula por línea. Una factura emitida no se borra.
+// ═══════════════════════════════════════════════════════════
+function openModal(html){
+  closeModal();
+  const bg=document.createElement("div");bg.className="modal-bg";bg.id="active-modal";bg.innerHTML=html;
+  bg.addEventListener("click",e=>{if(e.target===bg)closeModal()});
+  document.getElementById("modal-container").appendChild(bg);
+}
+const TIPOS_CLIENTE={
+  consumidor:{label:"Consumidor final",ivu:"11.5",nota:"10.5% estatal + 1% municipal"},
+  b2b:{label:"Comerciante B2B",ivu:"4",nota:"4% especial, sin municipal"},
+  revendedor:{label:"Revendedor con certificado",ivu:"exento",nota:"Exento — requiere certificado"},
+};
+function modoFacturacion(){return activeCompany().billingMode||"caja"}
+async function saveCustomers(){await dbSet("customers",S.customers)}
+async function saveProducts(){await dbSet("products",S.products)}
+async function saveInvoices(){await dbSet("invoices",S.invoices)}
+function clienteDe(id){return (S.customers||[]).find(c=>c.id===id)}
+function nombreCliente(id){const c=clienteDe(id);return c?c.name:"(cliente borrado)"}
+
+// ── Cálculo del IVU, línea por línea ──
+function calcLinea(l){
+  const base=(Number(l.cant)||0)*(Number(l.precio)||0);
+  const r=ivuRates();
+  let est=0,mun=0,esp=0;
+  if(l.ivu==="11.5"){est=base*(r.estatal/100);mun=base*(r.municipal/100)}
+  else if(l.ivu==="4"){esp=base*(r.especial/100)}
+  return {base,est,mun,esp,total:base+est+mun+esp};
+}
+function calcFactura(f){
+  let sub=0,est=0,mun=0,esp=0;
+  ((f&&f.lineas)||[]).forEach(l=>{const c=calcLinea(l);sub+=c.base;est+=c.est;mun+=c.mun;esp+=c.esp});
+  const rd=n=>Math.round(n*100)/100;
+  return {subtotal:rd(sub),ivuEstatal:rd(est),ivuMunicipal:rd(mun),ivuEspecial:rd(esp),
+          ivuTotal:rd(est+mun+esp),total:rd(sub+est+mun+esp)};
+}
+function proximoNumero(){
+  const pre=activeCompany().invoicePrefix||"F";
+  const nums=(S.invoices||[]).filter(f=>f.estado!=="borrador").map(f=>parseInt(String(f.numero).replace(/\D/g,""),10)||0);
+  const n=(nums.length?Math.max(...nums):0)+1;
+  return `${pre}-${String(n).padStart(5,"0")}`;
+}
+function facturasDelAnio(){return (S.invoices||[]).filter(f=>String(f.fecha||"").startsWith(String(S.year)))}
+function balanceFactura(f){const t=calcFactura(f);return Math.round((t.total-(Number(f.cobrado)||0))*100)/100}
+function estadoFactura(f){
+  if(f.estado==="borrador"||f.estado==="anulada")return f.estado;
+  const b=balanceFactura(f);
+  if(b<=0.005)return "pagada";
+  if((Number(f.cobrado)||0)>0.005)return "parcial";
+  if(f.vence&&f.vence<new Date().toISOString().slice(0,10))return "vencida";
+  return "emitida";
+}
+const EST_COLOR={borrador:"#6b7280",emitida:"#3b82f6",parcial:"#f59e0b",pagada:"#10b981",vencida:"#ef4444",anulada:"#6b7280"};
+
+// ── IVU devengado: sale de las facturas, no del banco ──
+function ivuDevengado(mes){
+  const acc={general:0,b2b:0,exento:0,estatal:0,municipal:0,especial:0,total:0,facturas:0};
+  facturasDelAnio().forEach(f=>{
+    if(["borrador","anulada"].includes(estadoFactura(f)))return;
+    if(mes!==undefined&&(+String(f.fecha).slice(5,7)-1)!==mes)return;
+    acc.facturas++;
+    (f.lineas||[]).forEach(l=>{
+      const c=calcLinea(l);
+      if(l.ivu==="11.5")acc.general+=c.base;
+      else if(l.ivu==="4")acc.b2b+=c.base;
+      else acc.exento+=c.base;
+      acc.estatal+=c.est;acc.municipal+=c.mun;acc.especial+=c.esp;
+    });
+  });
+  acc.total=acc.estatal+acc.municipal+acc.especial;
+  acc.baseGravable=acc.general+acc.b2b;
+  return acc;
+}
+
+// ══ CLIENTES ══
+function renderCustomers(){
+  const cs=[...(S.customers||[])].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const filas=cs.map((c,i)=>{
+    const t=TIPOS_CLIENTE[c.tipo]||TIPOS_CLIENTE.consumidor;
+    const fs=(S.invoices||[]).filter(f=>f.clienteId===c.id&&!["borrador","anulada"].includes(estadoFactura(f)));
+    const fact=fs.reduce((s,f)=>s+calcFactura(f).total,0);
+    const deuda=fs.reduce((s,f)=>s+Math.max(0,balanceFactura(f)),0);
+    const falta=c.tipo==="revendedor"&&!c.certificado;
+    return `<tr>
+      <td style="font-weight:500">${escHtml(c.name)}${falta?' <span class="tag tag-red" style="font-size:9px">falta certificado</span>':""}</td>
+      <td style="font-size:11px;color:var(--muted)">${escHtml(c.email||"—")}</td>
+      <td><span class="tag" style="font-size:9.5px">${t.label}</span></td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${fs.length||"—"}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${fact?fmt(fact):"—"}</td>
+      <td style="text-align:right;font-weight:600;color:${deuda>0.005?"var(--red)":"var(--muted)"}">${deuda>0.005?fmt(deuda):"—"}</td>
+      <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="showCustomerModal('${c.id}')">✏️</button></td>
+    </tr>`;
+  }).join("");
+  const sinCert=cs.filter(c=>c.tipo==="revendedor"&&!c.certificado).length;
+  return `<div style="max-width:940px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap">
+    <div><div style="font-size:15px;font-weight:600">Clientes</div><div style="font-size:11px;color:var(--muted)">${cs.length} registrados · el tipo de cliente decide cómo tributa cada venta</div></div>
+    <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" onclick="showModal('import-customers')">⬆️ Importar</button><button class="btn btn-primary btn-sm" onclick="showCustomerModal('')">+ Nuevo cliente</button></div>
+  </div>
+  ${sinCert?`<div class="card" style="margin-bottom:14px;border-color:rgba(239,68,68,.35)"><div style="font-size:12px;color:var(--red)">⚠️ ${sinCert} ${sinCert===1?"cliente marcado como revendedor no tiene":"clientes marcados como revendedores no tienen"} número de certificado. Sin el certificado, la venta exenta no se sostiene en una auditoría — la responsabilidad es del vendedor.</div></div>`:""}
+  ${cs.length?`<div class="card" style="padding:0;overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Nombre</th><th>Correo</th><th>Tipo</th><th style="text-align:right">Facturas</th><th style="text-align:right">Facturado</th><th style="text-align:right">Debe</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>`
+  :`<div class="card" style="text-align:center;padding:34px"><div style="font-size:13px;color:var(--muted);line-height:1.7">Todavía no hay clientes.<br>Si tienes un reporte de Stripe o PayPal, <strong>Importar</strong> los crea de una vez.</div></div>`}
+  </div>`;
+}
+function showCustomerModal(id){
+  const c=id?clienteDe(id):{id:"",name:"",email:"",tel:"",tipo:"consumidor",certificado:"",municipio:"",nota:""};
+  if(!c)return;
+  const opts=Object.entries(TIPOS_CLIENTE).map(([k,v])=>`<option value="${k}" ${c.tipo===k?"selected":""}>${v.label} — ${v.nota}</option>`).join("");
+  openModal(`<div class="modal" style="max-width:560px">
+    <div class="modal-title">${id?"Editar cliente":"Nuevo cliente"}</div>
+    <div class="input-row"><div style="flex:2"><label>Nombre *</label><input id="cl-name" style="width:100%" value="${escHtml(c.name)}"></div></div>
+    <div class="input-row"><div style="flex:1"><label>Correo</label><input id="cl-email" style="width:100%" value="${escHtml(c.email||"")}"></div><div style="flex:1"><label>Teléfono</label><input id="cl-tel" style="width:100%" value="${escHtml(c.tel||"")}"></div></div>
+    <label style="margin-top:8px">Tratamiento de IVU *</label>
+    <select id="cl-tipo" style="width:100%" onchange="document.getElementById('cl-cert-box').style.display=this.value==='revendedor'?'block':'none'">${opts}</select>
+    <div id="cl-cert-box" style="display:${c.tipo==="revendedor"?"block":"none"};margin-top:8px">
+      <label>Número de Certificado de Revendedor *</label>
+      <input id="cl-cert" style="width:100%" value="${escHtml(c.certificado||"")}" placeholder="Obligatorio para vender exento">
+    </div>
+    <div class="input-row" style="margin-top:8px"><div style="flex:1"><label>Municipio</label><input id="cl-mun" style="width:100%" value="${escHtml(c.municipio||"")}" placeholder="Para el 1% municipal"></div></div>
+    <div class="modal-footer">${id?`<button class="btn btn-ghost" style="color:var(--red)" onclick="deleteCustomer('${id}')">Eliminar</button>`:""}<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveCustomerForm('${id}')">Guardar</button></div>
+  </div>`);
+}
+async function saveCustomerForm(id){
+  const g=k=>(document.getElementById(k)||{}).value||"";
+  const name=g("cl-name").trim();
+  if(!name)return toast("⚠️ El nombre es obligatorio");
+  const tipo=g("cl-tipo");
+  const obj={id:id||`cli_${Date.now()}`,name,email:g("cl-email").trim(),tel:g("cl-tel").trim(),tipo,
+    certificado:tipo==="revendedor"?g("cl-cert").trim():"",municipio:g("cl-mun").trim()};
+  S.customers=id?(S.customers||[]).map(c=>c.id===id?{...c,...obj}:c):[...(S.customers||[]),obj];
+  await saveCustomers();closeModal();renderContent();
+  toast(id?"✅ Cliente actualizado":"✅ Cliente creado");
+}
+async function deleteCustomer(id){
+  const usa=(S.invoices||[]).some(f=>f.clienteId===id);
+  if(usa)return toast("⚠️ Tiene facturas — no se puede borrar");
+  S.customers=(S.customers||[]).filter(c=>c.id!==id);
+  await saveCustomers();closeModal();renderContent();toast("Cliente eliminado");
+}
+async function importCustomers(){
+  const txt=(document.getElementById("imp-cli")||{}).value||"";
+  let arr;
+  try{arr=JSON.parse(txt.trim())}catch(e){return toast("❌ No pude leer el JSON")}
+  if(!Array.isArray(arr))return toast("❌ Se espera un arreglo de clientes");
+  const porCorreo=new Map((S.customers||[]).map(c=>[(c.email||"").toLowerCase(),c]));
+  const porNombre=new Map((S.customers||[]).map(c=>[(c.name||"").toLowerCase(),c]));
+  let n=0,dup=0;
+  arr.forEach(x=>{
+    const name=String(x.name||x.nombre||"").trim();
+    if(!name)return;
+    const email=String(x.email||"").trim();
+    if((email&&porCorreo.has(email.toLowerCase()))||porNombre.has(name.toLowerCase())){dup++;return}
+    const obj={id:`cli_${Date.now()}_${n}`,name,email,tel:String(x.tel||x.telefono||""),
+      tipo:TIPOS_CLIENTE[x.tipo]?x.tipo:"consumidor",certificado:String(x.certificado||""),municipio:String(x.municipio||""),nota:String(x.nota||"")};
+    S.customers=[...(S.customers||[]),obj];
+    porCorreo.set(email.toLowerCase(),obj);porNombre.set(name.toLowerCase(),obj);
+    n++;
+  });
+  await saveCustomers();closeModal();renderContent();
+  toast(`✅ ${n} clientes importados${dup?` · ${dup} ya existían`:""}`);
+}
+
+// ══ PRODUCTOS ══
+function renderProducts(){
+  const ps=[...(S.products||[])].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const ing=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
+  const filas=ps.map(p=>{
+    const cta=S.coa.find(c=>c.code===p.coaCode);
+    const mg=(p.costo&&p.precio)?((p.precio-p.costo)/p.precio*100):null;
+    return `<tr>
+      <td style="font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted)">${escHtml(p.sku||"—")}</td>
+      <td style="font-weight:500">${escHtml(p.name)}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(p.precio||0)}</td>
+      <td><span class="tag" style="font-size:9.5px">${p.ivu==="exento"?"exento":p.ivu+"%"}</span></td>
+      <td style="font-size:11px;color:var(--muted)">${escHtml(cta?cta.name:"⚠️ sin cuenta")}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;color:${mg===null?"var(--muted)":mg<20?"var(--red)":"#10b981"}">${mg===null?"—":mg.toFixed(0)+"%"}</td>
+      <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="showProductModal('${p.id}')">✏️</button></td>
+    </tr>`;
+  }).join("");
+  return `<div style="max-width:940px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap">
+    <div><div style="font-size:15px;font-weight:600">Productos y servicios</div><div style="font-size:11px;color:var(--muted)">Precios <strong>sin</strong> IVU — el impuesto se calcula, nunca se guarda dentro del precio</div></div>
+    <button class="btn btn-primary btn-sm" onclick="showProductModal('')">+ Nuevo</button>
+  </div>
+  ${ps.length?`<div class="card" style="padding:0;overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>SKU</th><th>Nombre</th><th style="text-align:right">Precio</th><th>IVU</th><th>Cuenta</th><th style="text-align:right">Margen</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>`
+  :`<div class="card" style="text-align:center;padding:34px"><div style="font-size:13px;color:var(--muted);line-height:1.7">Sin productos todavía.<br>No son obligatorios para facturar, pero cada uno que añadas es una línea que no vuelves a teclear.</div></div>`}
+  ${ing.length?"":`<div class="card" style="margin-top:12px;border-color:rgba(245,158,11,.3)"><div style="font-size:12px;color:#f59e0b">⚠️ No hay cuentas de ingreso en el plan de cuentas de esta empresa.</div></div>`}
+  </div>`;
+}
+function showProductModal(id){
+  const p=id?(S.products||[]).find(x=>x.id===id):{id:"",sku:"",name:"",precio:"",costo:"",ivu:"11.5",coaCode:""};
+  if(!p)return;
+  const ing=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
+  openModal(`<div class="modal" style="max-width:560px">
+    <div class="modal-title">${id?"Editar":"Nuevo"} producto o servicio</div>
+    <div class="input-row"><div style="flex:1"><label>SKU</label><input id="pr-sku" style="width:100%" value="${escHtml(p.sku||"")}"></div><div style="flex:2"><label>Nombre *</label><input id="pr-name" style="width:100%" value="${escHtml(p.name||"")}"></div></div>
+    <div class="input-row"><div style="flex:1"><label>Precio sin IVU *</label><input id="pr-precio" type="number" step="0.01" style="width:100%" value="${p.precio||""}"></div><div style="flex:1"><label>Costo</label><input id="pr-costo" type="number" step="0.01" style="width:100%" value="${p.costo||""}" placeholder="opcional"></div></div>
+    <div class="input-row" style="margin-top:8px"><div style="flex:1"><label>IVU *</label><select id="pr-ivu" style="width:100%">
+      <option value="11.5" ${p.ivu==="11.5"?"selected":""}>11.5% — consumidor final</option>
+      <option value="4" ${p.ivu==="4"?"selected":""}>4% — comerciante B2B</option>
+      <option value="exento" ${p.ivu==="exento"?"selected":""}>Exento — seminarios, revendedores</option></select></div>
+      <div style="flex:1"><label>Cuenta de ingreso *</label><select id="pr-coa" style="width:100%"><option value="">— elegir —</option>${ing.map(c=>`<option value="${c.code}" ${p.coaCode===c.code?"selected":""}>${c.code} · ${escHtml(c.name)}</option>`).join("")}</select></div></div>
+    <div class="modal-footer">${id?`<button class="btn btn-ghost" style="color:var(--red)" onclick="deleteProduct('${id}')">Eliminar</button>`:""}<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveProductForm('${id}')">Guardar</button></div>
+  </div>`);
+}
+async function saveProductForm(id){
+  const g=k=>(document.getElementById(k)||{}).value||"";
+  const name=g("pr-name").trim();
+  if(!name)return toast("⚠️ El nombre es obligatorio");
+  if(!g("pr-coa"))return toast("⚠️ Elige la cuenta de ingreso");
+  const obj={id:id||`prd_${Date.now()}`,sku:g("pr-sku").trim(),name,
+    precio:Number(g("pr-precio"))||0,costo:Number(g("pr-costo"))||0,ivu:g("pr-ivu"),coaCode:g("pr-coa")};
+  S.products=id?(S.products||[]).map(p=>p.id===id?{...p,...obj}:p):[...(S.products||[]),obj];
+  await saveProducts();closeModal();renderContent();toast("✅ Guardado");
+}
+async function deleteProduct(id){
+  S.products=(S.products||[]).filter(p=>p.id!==id);
+  await saveProducts();closeModal();renderContent();toast("Producto eliminado");
+}
+
+
+// ══ FACTURAS ══
+let FEDIT=null;   // factura en edición
+function renderInvoices(){
+  const fs=facturasDelAnio().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  const vivas=fs.filter(f=>!["borrador","anulada"].includes(estadoFactura(f)));
+  const facturado=vivas.reduce((s,f)=>s+calcFactura(f).total,0);
+  const porCobrar=vivas.reduce((s,f)=>s+Math.max(0,balanceFactura(f)),0);
+  const iv=ivuDevengado();
+  const vencidas=vivas.filter(f=>estadoFactura(f)==="vencida");
+  const filas=fs.map(f=>{
+    const t=calcFactura(f),e=estadoFactura(f),b=balanceFactura(f);
+    return `<tr style="cursor:pointer" onclick="verFactura('${f.id}')">
+      <td style="font-family:ui-monospace,monospace;font-size:11.5px;white-space:nowrap">${escHtml(f.numero||"—")}</td>
+      <td style="color:var(--muted);white-space:nowrap;font-size:11.5px">${escHtml(f.fecha||"")}</td>
+      <td style="max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(nombreCliente(f.clienteId))}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(t.subtotal)}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)">${t.ivuTotal?fmt(t.ivuTotal):"—"}</td>
+      <td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${fmt(t.total)}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;color:${b>0.005?"var(--red)":"var(--muted)"}">${b>0.005?fmt(b):"—"}</td>
+      <td><span class="tag" style="font-size:9.5px;background:${EST_COLOR[e]}22;color:${EST_COLOR[e]};border:1px solid ${EST_COLOR[e]}55">${e}</span></td>
+    </tr>`;
+  }).join("");
+  return `<div style="max-width:1000px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap">
+    <div><div style="font-size:15px;font-weight:600">Facturas · ${S.year}</div><div style="font-size:11px;color:var(--muted)">El IVU se calcula por línea y se congela al emitir</div></div>
+    <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" onclick="exportInvoicesCsv()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="nuevaFactura()">+ Nueva factura</button></div>
+  </div>
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card kpi"><div class="kpi-label">Facturado</div><div class="kpi-val" style="color:#10b981">${fmt(facturado)}</div><div class="kpi-sub">${vivas.length} facturas emitidas</div></div>
+    <div class="card kpi"><div class="kpi-label">Por cobrar</div><div class="kpi-val" style="color:${porCobrar>0.005?"var(--gold)":"var(--muted)"}">${fmt(porCobrar)}</div><div class="kpi-sub">${vencidas.length?`${vencidas.length} vencida${vencidas.length>1?"s":""}`:"nada vencido"}</div></div>
+    <div class="card kpi"><div class="kpi-label">IVU devengado</div><div class="kpi-val" style="color:var(--red)">${fmt(iv.total)}</div><div class="kpi-sub">sobre ${fmt(iv.baseGravable)} gravable</div></div>
+    <div class="card kpi"><div class="kpi-label">Ventas exentas</div><div class="kpi-val">${fmt(iv.exento)}</div><div class="kpi-sub">seminarios y revendedores</div></div>
+  </div>
+  ${fs.length?`<div class="card" style="padding:0;overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th><th style="text-align:right">Subtotal</th><th style="text-align:right">IVU</th><th style="text-align:right">Total</th><th style="text-align:right">Balance</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table></div>`
+  :`<div class="card" style="text-align:center;padding:38px"><div style="font-size:13px;color:var(--muted);line-height:1.8">Todavía no hay facturas en ${S.year}.<br>Necesitas al menos un cliente antes de emitir la primera.</div><div style="margin-top:14px"><button class="btn btn-primary btn-sm" onclick="nuevaFactura()">+ Crear la primera</button></div></div>`}
+  </div>`;
+}
+function nuevaFactura(){
+  if(!(S.customers||[]).length){toast("⚠️ Primero crea un cliente");goTab("customers");return}
+  const hoy=new Date().toISOString().slice(0,10);
+  const v=new Date();v.setDate(v.getDate()+30);
+  FEDIT={id:"",numero:"",clienteId:S.customers[0].id,fecha:hoy,vence:v.toISOString().slice(0,10),
+    estado:"borrador",lineas:[nuevaLinea(S.customers[0].id)],cobrado:0,nota:""};
+  editorFactura();
+}
+function nuevaLinea(clienteId){
+  const c=clienteDe(clienteId);
+  return {desc:"",cant:1,precio:0,ivu:(TIPOS_CLIENTE[c&&c.tipo]||TIPOS_CLIENTE.consumidor).ivu,coaCode:""};
+}
+function editarFactura(id){
+  const f=(S.invoices||[]).find(x=>x.id===id);
+  if(!f)return;
+  FEDIT=JSON.parse(JSON.stringify(f));
+  editorFactura();
+}
+function feSet(i,campo,val){
+  if(campo==="cant"||campo==="precio")val=Number(val)||0;
+  FEDIT.lineas[i][campo]=val;
+  if(campo==="prod"){
+    const p=(S.products||[]).find(x=>x.id===val);
+    if(p){FEDIT.lineas[i]={...FEDIT.lineas[i],desc:p.name,precio:p.precio,ivu:p.ivu,coaCode:p.coaCode}}
+  }
+  editorFactura();
+}
+function feAddLinea(){FEDIT.lineas.push(nuevaLinea(FEDIT.clienteId));editorFactura()}
+function feDelLinea(i){if(FEDIT.lineas.length>1){FEDIT.lineas.splice(i,1);editorFactura()}}
+function feCliente(id){
+  FEDIT.clienteId=id;
+  const ivu=(TIPOS_CLIENTE[(clienteDe(id)||{}).tipo]||TIPOS_CLIENTE.consumidor).ivu;
+  FEDIT.lineas.forEach(l=>{if(!l.coaCode)l.ivu=ivu});
+  editorFactura();
+}
+function editorFactura(){
+  const t=calcFactura(FEDIT);
+  const cli=clienteDe(FEDIT.clienteId)||{};
+  const tipoCli=TIPOS_CLIENTE[cli.tipo]||TIPOS_CLIENTE.consumidor;
+  const ing=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
+  const prods=S.products||[];
+  const alerta=cli.tipo==="revendedor"&&!cli.certificado;
+  const lineas=FEDIT.lineas.map((l,i)=>{
+    const c=calcLinea(l);
+    return `<tr>
+      <td style="padding:5px 6px">
+        ${prods.length?`<select style="width:100%;font-size:11px;margin-bottom:3px" onchange="feSet(${i},'prod',this.value)"><option value="">— escribir a mano —</option>${prods.map(p=>`<option value="${p.id}">${escHtml(p.name)}</option>`).join("")}</select>`:""}
+        <input style="width:100%;font-size:12px" value="${escHtml(l.desc)}" placeholder="Descripción" oninput="FEDIT.lineas[${i}].desc=this.value">
+      </td>
+      <td style="padding:5px 6px"><input type="number" step="0.01" style="width:66px;font-size:12px" value="${l.cant}" onchange="feSet(${i},'cant',this.value)"></td>
+      <td style="padding:5px 6px"><input type="number" step="0.01" style="width:92px;font-size:12px" value="${l.precio}" onchange="feSet(${i},'precio',this.value)"></td>
+      <td style="padding:5px 6px"><select style="width:88px;font-size:11px" onchange="feSet(${i},'ivu',this.value)">
+        <option value="11.5" ${l.ivu==="11.5"?"selected":""}>11.5%</option>
+        <option value="4" ${l.ivu==="4"?"selected":""}>4% B2B</option>
+        <option value="exento" ${l.ivu==="exento"?"selected":""}>Exento</option></select></td>
+      <td style="padding:5px 6px"><select style="width:118px;font-size:11px" onchange="feSet(${i},'coaCode',this.value)"><option value="">— cuenta —</option>${ing.map(x=>`<option value="${x.code}" ${l.coaCode===x.code?"selected":""}>${x.code}</option>`).join("")}</select></td>
+      <td style="padding:5px 6px;text-align:right;font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap">${fmt(c.total)}</td>
+      <td style="padding:5px 4px"><button class="btn btn-ghost btn-sm" style="padding:2px 6px" onclick="feDelLinea(${i})" ${FEDIT.lineas.length>1?"":"disabled"}>✕</button></td>
+    </tr>`;
+  }).join("");
+  openModal(`<div class="modal" style="max-width:860px">
+    <div class="modal-title">${FEDIT.id?`Factura ${escHtml(FEDIT.numero||"(borrador)")}`:"Nueva factura"}</div>
+    <div class="input-row">
+      <div style="flex:2"><label>Cliente *</label><select id="fe-cli" style="width:100%" onchange="feCliente(this.value)">${(S.customers||[]).map(c=>`<option value="${c.id}" ${FEDIT.clienteId===c.id?"selected":""}>${escHtml(c.name)}</option>`).join("")}</select></div>
+      <div style="flex:1"><label>Fecha *</label><input type="date" id="fe-fecha" style="width:100%" value="${FEDIT.fecha}" onchange="FEDIT.fecha=this.value"></div>
+      <div style="flex:1"><label>Vence</label><input type="date" id="fe-vence" style="width:100%" value="${FEDIT.vence||""}" onchange="FEDIT.vence=this.value"></div>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:6px">${tipoCli.label} — ${tipoCli.nota}. La fecha decide en qué planilla mensual cae el IVU.</div>
+    ${alerta?`<div style="margin-top:8px;font-size:11px;color:var(--red);background:rgba(239,68,68,.1);padding:7px 10px;border-radius:6px">⚠️ Este cliente es revendedor pero no tiene certificado registrado. La venta exenta no se sostiene sin él.</div>`:""}
+    <div style="overflow-x:auto;margin-top:12px;border:1px solid var(--border);border-radius:8px">
+      <table style="font-size:12px;min-width:640px"><thead><tr><th style="padding:7px">Concepto</th><th style="padding:7px">Cant.</th><th style="padding:7px">Precio</th><th style="padding:7px">IVU</th><th style="padding:7px">Cuenta</th><th style="padding:7px;text-align:right">Total</th><th></th></tr></thead>
+      <tbody>${lineas}</tbody></table>
+    </div>
+    <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="feAddLinea()">+ Añadir línea</button></div>
+    <div style="margin-top:14px;display:flex;justify-content:flex-end">
+      <table style="font-size:12.5px;width:290px">
+        <tr><td style="color:var(--muted);padding:3px 0">Subtotal</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(t.subtotal)}</td></tr>
+        ${t.ivuEstatal?`<tr><td style="color:var(--muted);padding:3px 0">IVU estatal ${ivuRates().estatal}%</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(t.ivuEstatal)}</td></tr>`:""}
+        ${t.ivuMunicipal?`<tr><td style="color:var(--muted);padding:3px 0">IVU municipal ${ivuRates().municipal}%</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(t.ivuMunicipal)}</td></tr>`:""}
+        ${t.ivuEspecial?`<tr><td style="color:var(--muted);padding:3px 0">IVU especial ${ivuRates().especial}% B2B</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(t.ivuEspecial)}</td></tr>`:""}
+        <tr><td style="font-weight:600;padding:7px 0;border-top:1px solid var(--border)">Total</td><td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums;border-top:1px solid var(--border)">${fmt(t.total)}</td></tr>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-ghost" onclick="guardarFactura('borrador')">Guardar borrador</button>
+      <button class="btn btn-primary" onclick="guardarFactura('emitida')">Emitir factura</button>
+    </div>
+  </div>`);
+}
+async function guardarFactura(estado){
+  if(!FEDIT)return toast("⚠️ No hay una factura abierta");
+  const t=calcFactura(FEDIT);
+  if(!FEDIT.clienteId)return toast("⚠️ Elige un cliente");
+  if(!FEDIT.fecha)return toast("⚠️ Falta la fecha");
+  if(t.subtotal<=0)return toast("⚠️ La factura no tiene importe");
+  const sinDesc=FEDIT.lineas.some(l=>!String(l.desc||"").trim()&&(Number(l.precio)||0)!==0);
+  if(sinDesc)return toast("⚠️ Hay una línea con importe y sin descripción");
+  if(estado==="emitida"){
+    const sinCta=FEDIT.lineas.some(l=>!l.coaCode&&(Number(l.precio)||0)!==0);
+    if(sinCta)return toast("⚠️ Cada línea con importe necesita su cuenta de ingreso");
+  }
+  const esNueva=!FEDIT.id;
+  const yaEmitida=!esNueva&&FEDIT.numero;
+  const f={...FEDIT,estado,
+    id:FEDIT.id||`inv_${Date.now()}`,
+    numero:(estado==="emitida"&&!yaEmitida)?proximoNumero():FEDIT.numero,
+    ...t, tasas:ivuRates()};
+  S.invoices=esNueva?[...(S.invoices||[]),f]:(S.invoices||[]).map(x=>x.id===f.id?f:x);
+  if(!S.years.includes(+String(f.fecha).slice(0,4))){S.years=[...S.years,+String(f.fecha).slice(0,4)].sort();await saveYears()}
+  await saveInvoices();
+  FEDIT=null;closeModal();updateSidebar();renderContent();
+  toast(estado==="emitida"?`✅ Factura ${f.numero} emitida`:"✅ Borrador guardado");
+}
+function verFactura(id){
+  const f=(S.invoices||[]).find(x=>x.id===id);if(!f)return;
+  const t=calcFactura(f),e=estadoFactura(f),b=balanceFactura(f);
+  const cli=clienteDe(f.clienteId)||{name:"(cliente borrado)"};
+  const lin=(f.lineas||[]).map(l=>{const c=calcLinea(l);
+    return `<tr><td style="padding:5px 0">${escHtml(l.desc)}</td><td style="text-align:right;padding:5px 8px">${l.cant}</td><td style="text-align:right;padding:5px 8px;font-variant-numeric:tabular-nums">${fmt(l.precio)}</td><td style="padding:5px 8px"><span class="tag" style="font-size:9px">${l.ivu==="exento"?"exento":l.ivu+"%"}</span></td><td style="text-align:right;padding:5px 0;font-variant-numeric:tabular-nums">${fmt(c.total)}</td></tr>`}).join("");
+  openModal(`<div class="modal" style="max-width:620px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px">
+      <div><div class="modal-title" style="margin:0">${escHtml(f.numero||"Borrador")}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:3px">${escHtml(cli.name)} · ${escHtml(f.fecha)}${f.vence?` · vence ${escHtml(f.vence)}`:""}</div></div>
+      <span class="tag" style="background:${EST_COLOR[e]}22;color:${EST_COLOR[e]};border:1px solid ${EST_COLOR[e]}55">${e}</span>
+    </div>
+    <table style="width:100%;font-size:12.5px"><thead><tr style="color:var(--muted);font-size:10.5px;text-transform:uppercase"><th style="text-align:left;padding-bottom:5px">Concepto</th><th style="text-align:right;padding-bottom:5px">Cant</th><th style="text-align:right;padding-bottom:5px">Precio</th><th style="padding-bottom:5px">IVU</th><th style="text-align:right;padding-bottom:5px">Total</th></tr></thead><tbody>${lin}</tbody></table>
+    <table style="width:100%;font-size:12.5px;margin-top:12px;border-top:1px solid var(--border);padding-top:8px">
+      <tr><td style="color:var(--muted);padding:3px 0">Subtotal</td><td style="text-align:right">${fmt(t.subtotal)}</td></tr>
+      ${t.ivuTotal?`<tr><td style="color:var(--muted);padding:3px 0">IVU</td><td style="text-align:right">${fmt(t.ivuTotal)}</td></tr>`:""}
+      <tr><td style="font-weight:600;padding:5px 0">Total</td><td style="text-align:right;font-weight:600">${fmt(t.total)}</td></tr>
+      ${(Number(f.cobrado)||0)?`<tr><td style="color:var(--muted);padding:3px 0">Cobrado</td><td style="text-align:right;color:#10b981">${fmt(f.cobrado)}</td></tr>`:""}
+      ${b>0.005?`<tr><td style="font-weight:600;padding:3px 0;color:var(--red)">Balance</td><td style="text-align:right;font-weight:600;color:var(--red)">${fmt(b)}</td></tr>`:""}
+    </table>
+    ${e==="anulada"?`<div style="margin-top:12px;font-size:11px;color:var(--muted)">Anulada${f.motivoAnulacion?`: ${escHtml(f.motivoAnulacion)}`:""} — se conserva para el rastro de auditoría.</div>`:""}
+    <div class="modal-footer" style="flex-wrap:wrap;gap:6px">
+      ${e==="anulada"?"":`<button class="btn btn-ghost" style="color:var(--red)" onclick="anularFactura('${f.id}')">Anular</button>`}
+      ${["pagada","anulada"].includes(e)?"":`<button class="btn btn-ghost" onclick="registrarCobro('${f.id}')">Registrar cobro</button>`}
+      ${e==="borrador"?`<button class="btn btn-ghost" onclick="editarFactura('${f.id}')">Editar</button>`:""}
+      <button class="btn btn-ghost" onclick="imprimirFactura('${f.id}')">🖨 Imprimir / PDF</button>
+      <button class="btn btn-primary" onclick="closeModal()">Cerrar</button>
+    </div>
+  </div>`);
+}
+function registrarCobro(id){
+  const f=(S.invoices||[]).find(x=>x.id===id);if(!f)return;
+  const b=balanceFactura(f);
+  openModal(`<div class="modal" style="max-width:440px">
+    <div class="modal-title">Registrar cobro</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${escHtml(f.numero)} · ${escHtml(nombreCliente(f.clienteId))} · balance ${fmt(b)}</div>
+    <div class="input-row"><div style="flex:1"><label>Monto *</label><input type="number" step="0.01" id="co-monto" style="width:100%" value="${b.toFixed(2)}"></div>
+    <div style="flex:1"><label>Fecha</label><input type="date" id="co-fecha" style="width:100%" value="${new Date().toISOString().slice(0,10)}"></div></div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:8px">El cobro reduce el balance de la factura. No crea un ingreso — el ingreso ya se reconoció al emitirla.</div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="verFactura('${id}')">Volver</button><button class="btn btn-primary" onclick="guardarCobro('${id}')">Guardar cobro</button></div>
+  </div>`);
+}
+async function guardarCobro(id){
+  const m=Number((document.getElementById("co-monto")||{}).value)||0;
+  if(m<=0)return toast("⚠️ El monto debe ser mayor que cero");
+  const fe=(document.getElementById("co-fecha")||{}).value||new Date().toISOString().slice(0,10);
+  S.invoices=(S.invoices||[]).map(f=>f.id!==id?f:{...f,cobrado:Math.round(((Number(f.cobrado)||0)+m)*100)/100,
+    cobros:[...(f.cobros||[]),{fecha:fe,monto:m}]});
+  await saveInvoices();closeModal();renderContent();toast(`✅ Cobro de ${fmt(m)} registrado`);
+}
+async function anularFactura(id){
+  const motivo=prompt("Motivo de la anulación (queda en el registro):");
+  if(motivo===null)return;
+  S.invoices=(S.invoices||[]).map(f=>f.id!==id?f:{...f,estado:"anulada",motivoAnulacion:motivo,anuladaEl:new Date().toISOString().slice(0,10)});
+  await saveInvoices();closeModal();renderContent();
+  toast("Factura anulada — el número no se reutiliza");
+}
+function imprimirFactura(id){
+  const f=(S.invoices||[]).find(x=>x.id===id);if(!f)return;
+  const t=calcFactura(f),co=activeCompany(),cli=clienteDe(f.clienteId)||{name:"—"};
+  const r=f.tasas||ivuRates();
+  const lin=(f.lineas||[]).map(l=>{const c=calcLinea(l);
+    return `<tr><td>${escHtml(l.desc)}</td><td class="n">${l.cant}</td><td class="n">${fmt(l.precio)}</td><td class="c">${l.ivu==="exento"?"Exento":l.ivu+"%"}</td><td class="n">${fmt(c.total)}</td></tr>`}).join("");
+  const w=window.open("","_blank","width=820,height=980");
+  if(!w)return toast("⚠️ El navegador bloqueó la ventana — permite las ventanas emergentes");
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escHtml(f.numero||"Factura")}</title><style>
+  *{box-sizing:border-box}body{font:13px/1.55 -apple-system,"Segoe UI",Roboto,sans-serif;color:#111;margin:0;padding:44px 40px;max-width:800px}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;border-bottom:2px solid #111;padding-bottom:16px}
+  .co{font-size:19px;font-weight:700;letter-spacing:-.01em}.sub{font-size:11.5px;color:#666;margin-top:3px}
+  .doc{text-align:right}.doc .t{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#888}
+  .doc .num{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+  .meta{display:flex;gap:44px;margin:22px 0 26px;flex-wrap:wrap}
+  .meta h4{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:#888;margin:0 0 5px;font-weight:600}
+  .meta div>p{margin:1px 0;font-size:12.5px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:#888;border-bottom:1px solid #ccc;padding:7px 8px 7px 0;font-weight:600}
+  td{padding:8px 8px 8px 0;border-bottom:1px solid #eee;vertical-align:top}
+  .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .c{font-size:11px;color:#666;white-space:nowrap}
+  th.n,th.c{text-align:right}
+  .tot{margin-top:20px;margin-left:auto;width:298px;font-size:12.5px}
+  .tot tr td{border:none;padding:4px 0}.tot .lb{color:#666}.tot .vl{text-align:right;font-variant-numeric:tabular-nums}
+  .tot .gr td{border-top:1.5px solid #111;font-weight:700;font-size:14.5px;padding-top:9px}
+  .ft{margin-top:38px;border-top:1px solid #ddd;padding-top:14px;font-size:10.5px;color:#777;line-height:1.7}
+  .pag{margin-top:16px;padding:10px 13px;background:#f5f5f3;border-radius:5px;font-size:11.5px}
+  @media print{body{padding:0}@page{margin:16mm}}
+  </style></head><body>
+  <div class="top">
+    <div><div class="co">${escHtml(co.name||"")}</div><div class="sub">${escHtml([co.entity,co.state].filter(Boolean).join(" · "))}</div>
+    ${co.registroComerciante?`<div class="sub">Registro de Comerciante: ${escHtml(co.registroComerciante)}</div>`:""}</div>
+    <div class="doc"><div class="t">Factura</div><div class="num">${escHtml(f.numero||"BORRADOR")}</div></div>
+  </div>
+  <div class="meta">
+    <div><h4>Facturar a</h4><p><strong>${escHtml(cli.name)}</strong></p>${cli.email?`<p>${escHtml(cli.email)}</p>`:""}${cli.tel?`<p>${escHtml(cli.tel)}</p>`:""}${cli.municipio?`<p>${escHtml(cli.municipio)}, PR</p>`:""}${cli.certificado?`<p>Cert. Revendedor: ${escHtml(cli.certificado)}</p>`:""}</div>
+    <div><h4>Fecha</h4><p>${escHtml(f.fecha)}</p></div>
+    ${f.vence?`<div><h4>Vencimiento</h4><p>${escHtml(f.vence)}</p></div>`:""}
+  </div>
+  <table><thead><tr><th>Concepto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="c">IVU</th><th class="n">Importe</th></tr></thead><tbody>${lin}</tbody></table>
+  <table class="tot">
+    <tr><td class="lb">Subtotal</td><td class="vl">${fmt(t.subtotal)}</td></tr>
+    ${t.ivuEstatal?`<tr><td class="lb">IVU Estatal ${r.estatal}%</td><td class="vl">${fmt(t.ivuEstatal)}</td></tr>`:""}
+    ${t.ivuMunicipal?`<tr><td class="lb">IVU Municipal ${r.municipal}%</td><td class="vl">${fmt(t.ivuMunicipal)}</td></tr>`:""}
+    ${t.ivuEspecial?`<tr><td class="lb">IVU Especial ${r.especial}% B2B</td><td class="vl">${fmt(t.ivuEspecial)}</td></tr>`:""}
+    <tr class="gr"><td>Total</td><td class="vl">${fmt(t.total)}</td></tr>
+    ${(Number(f.cobrado)||0)?`<tr><td class="lb">Cobrado</td><td class="vl">${fmt(f.cobrado)}</td></tr><tr class="gr"><td>Balance</td><td class="vl">${fmt(balanceFactura(f))}</td></tr>`:""}
+  </table>
+  ${co.instruccionesPago?`<div class="pag"><strong>Pago:</strong> ${escHtml(co.instruccionesPago)}</div>`:""}
+  ${f.nota?`<div class="pag">${escHtml(f.nota)}</div>`:""}
+  <div class="ft">${t.ivuTotal?`El IVU cobrado en esta factura se remite al Departamento de Hacienda de Puerto Rico mediante la Planilla Mensual SC 2915.`:`Esta transacción no está sujeta a IVU.`}${cli.certificado?" Venta exenta amparada en el Certificado de Revendedor indicado.":""}</div>
+  </body></html>`);
+  w.document.close();
+  setTimeout(()=>{try{w.focus();w.print()}catch(e){}},320);
+}
+function exportInvoicesCsv(){
+  let csv="Número,Fecha,Vence,Cliente,Tipo,Subtotal,IVU Estatal,IVU Municipal,IVU Especial,Total,Cobrado,Balance,Estado\n";
+  facturasDelAnio().sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).forEach(f=>{
+    const t=calcFactura(f),c=clienteDe(f.clienteId)||{};
+    csv+=`${f.numero||""},${f.fecha},${f.vence||""},"${(c.name||"").replace(/"/g,'""')}",${(TIPOS_CLIENTE[c.tipo]||{}).label||""},${t.subtotal},${t.ivuEstatal},${t.ivuMunicipal},${t.ivuEspecial},${t.total},${Number(f.cobrado)||0},${balanceFactura(f)},${estadoFactura(f)}\n`;
+  });
+  downloadFile(`Facturas_${S.year}.csv`,csv,"text/csv");
 }
 
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
@@ -2091,7 +2618,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.12"; //@build
+const BUILD="2026-09-16.13"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -2297,7 +2824,7 @@ function renderIvu(){
 
 function renderContent(){
   const el=document.getElementById("content");
-  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,txns:renderTxns,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
+  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,txns:renderTxns,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
   const banner=(S.tab==="settings")?"":taxAlertBanner();
   el.innerHTML=banner+(map[S.tab]||renderDashboard)();
 }
