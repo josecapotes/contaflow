@@ -538,9 +538,10 @@ function showCompanyModal(idx){
     <label style="margin-top:8px">Módulo de impuestos</label>
     <select id="co-tax" style="width:100%">
       <option value="fl-llc" ${(c.taxProfile||"none")==="fl-llc"?"selected":""}>Florida LLC Pass-Through (SE Tax + Form 1040-ES)</option>
+      <option value="pr-ivu" ${(c.taxProfile||"none")==="pr-ivu"?"selected":""}>Puerto Rico — IVU (10.5% + 1% municipal, 4% B2B)</option>
       <option value="none" ${(c.taxProfile||"none")==="none"?"selected":""}>Sin configurar — no calcular impuestos</option>
     </select>
-    <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.7">⚠️ El perfil de Florida aplica SE Tax 15.3%, tramo estimado del 10% y el calendario del Form 1040-ES. <strong>No uses ese perfil para una empresa de Puerto Rico</strong> — las reglas son distintas. Elige "Sin configurar" y consulta a tu CPA.</div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.7">⚠️ Cada perfil aplica reglas distintas: Florida usa SE Tax y Form 1040-ES; Puerto Rico usa IVU con planilla mensual SC 2915. <strong>No mezcles perfiles entre jurisdicciones.</strong> Las tasas del IVU se ajustan en Configuración.</div>
     ${esLegacy?'<div style="font-size:10.5px;color:#f59e0b;margin-top:8px;line-height:1.6">Esta es tu empresa original. Sus datos viven en las claves originales y no se pueden mover — puedes renombrarla sin problema.</div>':""}
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
@@ -995,6 +996,7 @@ function renderCashflow(){
 
 function renderTaxes(){
   const txs=S.txns;
+  if((S.settings.taxProfile||"fl-llc")==="pr-ivu")return renderIvu();
   if((S.settings.taxProfile||"fl-llc")!=="fl-llc"){
     const co=activeCompany();
     const neto=txs.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
@@ -1169,7 +1171,11 @@ function computeAccountBalance(accountId,asOfDate){
 }
 
 function renderCoa(){
-  return`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div style="font-size:15px;font-weight:600">Plan de Cuentas</div><button class="btn btn-primary btn-sm" onclick="showModal('add-coa')">+ Nueva</button></div><div class="card card-sm"><table><thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Grupo</th><th></th></tr></thead><tbody>${S.coa.map(c=>`<tr style="${c.group==="header"?"background:var(--row)":""}"><td style="font-weight:${c.group==="header"?600:400}">${c.code}</td><td style="padding-left:${c.group==="header"?10:22}px">${escHtml(c.name)}</td><td>${c.group!=="header"?`<span class="tag" style="background:${TYPE_COLOR[c.type]||'#6b7280'}20;color:${TYPE_COLOR[c.type]||'#6b7280'};border:1px solid ${TYPE_COLOR[c.type]||'#6b7280'}40;font-size:10px">${c.type}</span>`:""}</td><td style="color:var(--muted);font-size:11px">${c.group}</td><td>${c.group!=="header"?`<button onclick="removeCoa('${c.code}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`:""}</td></tr>`).join("")}</tbody></table></div>`;
+  return`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div style="font-size:15px;font-weight:600">Plan de Cuentas</div><button class="btn btn-primary btn-sm" onclick="showModal('add-coa')">+ Nueva</button></div><div class="card card-sm"><table><thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Grupo</th>${(S.settings.taxProfile||"")==="pr-ivu"?"<th>IVU</th>":""}<th></th></tr></thead><tbody>${S.coa.map(c=>`<tr style="${c.group==="header"?"background:var(--row)":""}"><td style="font-weight:${c.group==="header"?600:400}">${c.code}</td><td style="padding-left:${c.group==="header"?10:22}px">${escHtml(c.name)}</td><td>${c.group!=="header"?`<span class="tag" style="background:${TYPE_COLOR[c.type]||'#6b7280'}20;color:${TYPE_COLOR[c.type]||'#6b7280'};border:1px solid ${TYPE_COLOR[c.type]||'#6b7280'}40;font-size:10px">${c.type}</span>`:""}</td><td style="color:var(--muted);font-size:11px">${c.group}</td>${(S.settings.taxProfile||"")==="pr-ivu"?`<td>${c.type==="revenue"&&c.group!=="header"?`<select onchange="setCoaIvu('${c.code}',this.value)" style="font-size:10px;padding:2px 4px">${["11.5","4","exento","revisar","sin_clasificar"].map(k=>`<option value="${k}" ${ivuDe(c.code)===k?"selected":""}>${IVU_ETIQUETA[k]}</option>`).join("")}</select>`:""}</td>`:""}<td>${c.group!=="header"?`<button onclick="removeCoa('${c.code}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`:""}</td></tr>`).join("")}</tbody></table></div>`;
+}
+async function setCoaIvu(code,val){
+  S.coa=S.coa.map(c=>c.code===code?{...c,ivu:val}:c);
+  await saveCoa();renderContent();toast("✅ IVU actualizado");
 }
 async function removeCoa(code){S.coa=S.coa.filter(c=>c.code!==code);await saveCoa();renderContent();}
 
@@ -1246,6 +1252,16 @@ function buildAiContext(){
   const next=qs.find(q=>q.due>=iso);
   if(next)L.push(`PRÓXIMO VENCIMIENTO: ${next.q} el ${next.due} por ${fmt(next.tot)}.`);
   L.push(`Otras fechas: Sunbiz Annual Report ${S.year}-05-01 ($138.75).`);
+  }else if((S.settings.taxProfile||"")==="pr-ivu"){
+    const r=ivuRates(), an=ivuMensual();
+    L.push(``);L.push(`== IVU PUERTO RICO ==`);
+    L.push(`Tasas: ${r.estatal}% estatal + ${r.municipal}% municipal = ${r.estatal+r.municipal}% general. ${r.especial}% especial para servicios B2B (SIN el municipal).`);
+    L.push(`Ventas gravables ${S.year}: ${fmt(an.baseGravable)} | exentas: ${fmt(an.exento)}`);
+    L.push(`IVU por remitir ${S.year}: estatal ${fmt(an.estatal)} + municipal ${fmt(an.municipal)} + 4% B2B ${fmt(an.especial)} = ${fmt(an.total)}`);
+    if(an.sin_clasificar>0)L.push(`ATENCIÓN: ${fmt(an.sin_clasificar)} en ventas cuyas cuentas no tienen tratamiento de IVU asignado — no están en el cálculo.`);
+    if(an.revisar>0)L.push(`ATENCIÓN: ${fmt(an.revisar)} en cuentas marcadas "por confirmar" (seminarios). Su tratamiento no está confirmado con el CPA.`);
+    L.push(`Obligación: Planilla Mensual SC 2915 por SURI, vence el día 20 del mes siguiente. Se reportan ventas gravables Y exentas.`);
+    L.push(`No estimes contribución sobre ingresos de PR: no está configurada. Para eso, remite al CPA.`);
   }else{
     L.push(``);L.push(`== IMPUESTOS ==`);L.push(`El módulo fiscal de esta empresa NO está configurado. No estimes impuestos ni inventes tasas: dile al usuario que las reglas de su jurisdicción las debe confirmar con su CPA.`);
   }
@@ -1431,13 +1447,23 @@ function taxQuarters(){
   });
 }
 function fiscalDeadlines(){
+  if((S.settings.taxProfile||"fl-llc")==="pr-ivu"){
+    const out=[];
+    for(let m=0;m<12;m++){
+      const d=ivuMensual(m);
+      if(d.total<=0)continue;
+      out.push({fecha:ivuVencimiento(S.year,m),evento:`Planilla Mensual de IVU (SC 2915) · ${MONTHS[m]}`,monto:d.total});
+    }
+    return out.sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  }
   const d=taxQuarters().filter(q=>q.tot>0).map(q=>({fecha:q.due,evento:`Pago estimado ${q.q} (Form 1040-ES)`,monto:q.tot}));
   d.push({fecha:`${S.year}-05-01`,evento:"Sunbiz Annual Report",monto:138.75});
   d.push({fecha:`${S.year+1}-04-15`,evento:"Form 1040 + Schedule C",monto:0});
   return d.sort((a,b)=>a.fecha.localeCompare(b.fecha));
 }
 function taxAlertBanner(){
-  if((S.settings.taxProfile||"fl-llc")!=="fl-llc")return "";
+  const __perf=(S.settings.taxProfile||"fl-llc");
+  if(__perf!=="fl-llc"&&__perf!=="pr-ivu")return "";
   if(S.alertDismissed===new Date().toISOString().slice(0,10))return "";
   const hoy=new Date().toISOString().slice(0,10);
   const ms=f=>Math.round((new Date(f+"T00:00:00")-new Date(hoy+"T00:00:00"))/86400000);
@@ -1836,7 +1862,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.5"; //@build
+const BUILD="2026-09-16.6"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -1884,6 +1910,136 @@ function iniciarVigilanciaVersion(){
   document.addEventListener("visibilitychange",()=>{     // al volver a la pestaña
     if(document.visibilityState==="visible")checkForUpdate();
   });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  IVU · PUERTO RICO
+//  Tasas y reglas verificadas contra Hacienda PR (sep 2026):
+//   · 10.5% estatal + 1% municipal = 11.5% general
+//   · 4% especial B2B / profesionales designados — SOLO estatal,
+//     no se le añade el 1% municipal
+//   · Planilla Mensual SC 2915, vence el día 20 del mes siguiente,
+//     radicación únicamente por SURI
+//  Las tasas son configurables: si Hacienda las cambia, se ajustan
+//  aquí sin tocar código.
+// ═══════════════════════════════════════════════════════════
+const IVU_DEFAULTS={estatal:10.5, municipal:1, especial:4};
+
+function ivuRates(){
+  const r=S.settings.ivuRates||{};
+  return {
+    estatal:Number(r.estatal ?? IVU_DEFAULTS.estatal),
+    municipal:Number(r.municipal ?? IVU_DEFAULTS.municipal),
+    especial:Number(r.especial ?? IVU_DEFAULTS.especial)
+  };
+}
+// Cómo tributa cada cuenta de ingreso. Se guarda en el plan de cuentas.
+function ivuDe(code){
+  const c=S.coa.find(x=>x.code===code);
+  return (c&&c.ivu)||"sin_clasificar";
+}
+const IVU_ETIQUETA={ "11.5":"11.5% general", "4":"4% B2B", "exento":"Exento", "revisar":"Por confirmar", "sin_clasificar":"Sin clasificar" };
+const IVU_COLOR={ "11.5":"#10b981", "4":"#3b82f6", "exento":"#6b7280", "revisar":"#f59e0b", "sin_clasificar":"#ef4444" };
+
+// Liquidación mensual: base imponible y IVU por remitir
+function ivuMensual(mes){
+  const r=ivuRates();
+  const ventas=S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&(mes===undefined||getTxMonth(t)===mes));
+  const acc={general:0,b2b:0,exento:0,revisar:0,sin_clasificar:0};
+  ventas.forEach(t=>{
+    const k=ivuDe(t.coaCode);
+    if(k==="11.5")acc.general+=t.amount;
+    else if(k==="4")acc.b2b+=t.amount;
+    else if(k==="exento")acc.exento+=t.amount;
+    else if(k==="revisar")acc.revisar+=t.amount;
+    else acc.sin_clasificar+=t.amount;
+  });
+  const estatal=acc.general*(r.estatal/100);
+  const municipal=acc.general*(r.municipal/100);
+  const especial=acc.b2b*(r.especial/100);
+  return {...acc, estatal, municipal, especial, total:estatal+municipal+especial,
+          baseGravable:acc.general+acc.b2b, ventasTotales:acc.general+acc.b2b+acc.exento+acc.revisar+acc.sin_clasificar};
+}
+
+// Vencimiento: día 20 del mes siguiente al periodo
+function ivuVencimiento(anio,mes){
+  const m=mes===11?0:mes+1, y=mes===11?anio+1:anio;
+  return `${y}-${String(m+1).padStart(2,"0")}-20`;
+}
+
+function renderIvu(){
+  const r=ivuRates(), co=activeCompany();
+  const hoy=new Date().toISOString().slice(0,10);
+  const anual=ivuMensual();
+  const filas=[];
+  for(let m=0;m<12;m++){
+    const d=ivuMensual(m);
+    if(d.ventasTotales===0)continue;
+    const vence=ivuVencimiento(S.year,m);
+    const vencido=vence<hoy&&d.total>0;
+    filas.push(`<tr>
+      <td style="color:var(--muted)">${MONTHS[m]}</td>
+      <td style="text-align:right">${fmt(d.general)}</td>
+      <td style="text-align:right">${d.b2b?fmt(d.b2b):"—"}</td>
+      <td style="text-align:right;color:var(--muted)">${d.exento?fmt(d.exento):"—"}</td>
+      <td style="text-align:right">${d.estatal?fmt(d.estatal):"—"}</td>
+      <td style="text-align:right">${d.municipal?fmt(d.municipal):"—"}</td>
+      <td style="text-align:right">${d.especial?fmt(d.especial):"—"}</td>
+      <td style="text-align:right;font-weight:600;color:var(--red)">${fmt(d.total)}</td>
+      <td><span class="tag ${vencido?"tag-red":"tag-gold"}" style="font-size:9.5px;white-space:nowrap">${vence}${vencido?" ⚠":""}</span></td>
+    </tr>`);
+  }
+  const sinClasificar=anual.sin_clasificar, porRevisar=anual.revisar;
+
+  return`<div style="max-width:940px">
+  <div style="font-size:15px;font-weight:600;margin-bottom:6px">IVU · ${S.year}</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">${escHtml(co.name)} · ${escHtml(co.state||"Puerto Rico")} · Planilla Mensual SC 2915 vía SURI</div>
+
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card kpi"><div class="kpi-label">Ventas Gravables</div><div class="kpi-val" style="color:#10b981">${fmt(anual.baseGravable)}</div><div class="kpi-sub">base del cálculo</div></div>
+    <div class="card kpi"><div class="kpi-label">IVU Estatal ${r.estatal}%</div><div class="kpi-val" style="color:var(--red)">${fmt(anual.estatal)}</div></div>
+    <div class="card kpi"><div class="kpi-label">IVU Municipal ${r.municipal}%</div><div class="kpi-val" style="color:var(--red)">${fmt(anual.municipal)}</div></div>
+    <div class="card kpi"><div class="kpi-label">Total por Remitir</div><div class="kpi-val" style="color:var(--red)">${fmt(anual.total)}</div><div class="kpi-sub">${anual.especial?`incluye ${fmt(anual.especial)} del 4% B2B`:"año completo"}</div></div>
+  </div>
+
+  ${(sinClasificar>0||porRevisar>0)?`<div class="card" style="margin-bottom:16px;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.05)">
+    <div style="font-size:12px;font-weight:600;color:#ef4444;margin-bottom:6px">⚠️ Ventas sin tratamiento de IVU definido</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.8">
+      ${sinClasificar>0?`<strong style="color:#ef4444">${fmt(sinClasificar)}</strong> en cuentas sin clasificar — no están entrando en el cálculo. Asígnales su tasa en <strong>Plan de Cuentas</strong>.<br>`:""}
+      ${porRevisar>0?`<strong style="color:#f59e0b">${fmt(porRevisar)}</strong> en cuentas marcadas "Por confirmar" (seminarios y adiestramientos). Confirma su tratamiento con tu CPA antes de radicar.`:""}
+    </div>
+  </div>`:""}
+
+  <div class="card card-sm" style="margin-bottom:16px"><div class="section-title">Liquidación mensual</div>
+    <div style="overflow-x:auto"><table style="font-size:11px;min-width:820px"><thead><tr>
+      <th>Mes</th><th style="text-align:right">Gravable ${r.estatal+r.municipal}%</th><th style="text-align:right">B2B ${r.especial}%</th>
+      <th style="text-align:right">Exento</th><th style="text-align:right">Estatal</th><th style="text-align:right">Municipal</th>
+      <th style="text-align:right">4% B2B</th><th style="text-align:right;color:var(--red)">A Remitir</th><th>Vence</th>
+    </tr></thead><tbody>${filas.join("")||'<tr><td colspan="9" style="color:var(--muted);text-align:center;padding:18px">Sin ventas registradas en '+S.year+'</td></tr>'}</tbody></table></div>
+  </div>
+
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div class="card" style="flex:1;min-width:260px;border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.05)">
+      <div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:10px">📅 Obligaciones</div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.9">
+        <strong style="color:var(--text)">Día 20 de cada mes</strong> — Planilla Mensual de IVU (SC 2915) del mes anterior<br>
+        <strong style="color:var(--text)">Solo por SURI</strong> — suri.hacienda.pr.gov<br>
+        Se reportan ventas gravables <em>y exentas</em><br>
+        Incluye Impuesto sobre Uso de compras para uso del negocio
+      </div>
+    </div>
+    <div class="card" style="flex:1;min-width:260px;border-color:rgba(59,130,246,.3)">
+      <div style="font-size:12px;font-weight:600;color:#3b82f6;margin-bottom:10px">ℹ️ Reglas aplicadas</div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.9">
+        <strong style="color:var(--text)">${r.estatal}% + ${r.municipal}% = ${r.estatal+r.municipal}%</strong> — venta de productos y servicios a consumidor final<br>
+        <strong style="color:var(--text)">${r.especial}% estatal, sin municipal</strong> — servicios B2B a comerciante registrado en SURI<br>
+        Reventa con Certificado de Revendedor vigente — exenta<br>
+        <span style="color:#f59e0b">⚠️ No soy tu CPA: confirma con él antes de radicar.</span>
+      </div>
+    </div>
+  </div>
+</div>`;
 }
 
 function renderContent(){
