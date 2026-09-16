@@ -1064,23 +1064,95 @@ function isInternalXfer(bd){
   const s=(bd||"").toLowerCase();
   return["io autopay","mercury initiated payment","percentage-based rule","transfer between your mercury accounts","backup to primary"].some(x=>s.includes(x));
 }
-function parseBankData(text){
-  text=text.trim();
-  // JSON array?
-  if(text.startsWith("[")){try{const arr=JSON.parse(text);return arr.map(t=>({date:(t.date||"").slice(0,10),description:t.description||"",amount:parseFloat(t.amount)||0,accountId:t.accountId||"",kind:t.kind||"",status:"Sent",bankDesc:t.note||""}));}catch(e){return null}}
-  // CSV Mercury
-  const lines=text.split(/\r?\n/).filter(l=>l.trim());
-  if(!lines.length)return null;
+// ═══ IMPORTADOR CSV GENÉRICO (cualquier banco) ═══
+const CSV_SYN={
+  date:["date (utc)","transaction date","posting date","post date","fecha efectiva","fecha de transaccion","fecha","date"],
+  desc:["description","descripcion","concepto","detalle","memo","payee","narrative"],
+  amount:["amount","monto","importe","valor","cantidad"],
+  debit:["debit","debito","cargo","cargos","retiro","withdrawal","debits"],
+  credit:["credit","credito","abono","deposito","deposit","credits"],
+  status:["status","estado"],
+  src:["source account","account number","account","cuenta"],
+  bankDesc:["bank description","details","descripcion del banco"]
+};
+function csvNorm(s){return(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim()}
+function guessCol(hdr,keys,taken){
+  const H=hdr.map(csvNorm),T=taken||[];
+  for(const k of keys){const i=H.indexOf(csvNorm(k));if(i>=0&&!T.includes(i))return i}
+  for(const k of keys){const i=H.findIndex((h,j)=>h.includes(csvNorm(k))&&!T.includes(j));if(i>=0)return i}
+  return -1;
+}
+function parseAmount(v){
+  let s=String(v==null?"":v).trim();
+  if(!s)return 0;
+  let neg=/^\(.*\)$/.test(s);
+  s=s.replace(/[()]/g,"").replace(/[$\s ]/g,"");
+  if(/^-/.test(s)){neg=true;s=s.slice(1)}
+  if(/,\d{1,2}$/.test(s)&&s.includes("."))s=s.replace(/\./g,"").replace(",",".");
+  else s=s.replace(/,/g,"");
+  const n=parseFloat(s);
+  if(!isFinite(n))return 0;
+  return neg?-Math.abs(n):n;
+}
+function detectDateFmt(vals){
+  let dFirst=0,mFirst=0,iso=0;
+  vals.forEach(v=>{const s=String(v||"").trim();
+    if(/^\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/.test(s)){iso++;return}
+    const m=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/);
+    if(!m)return;
+    if(+m[1]>12)dFirst++;
+    if(+m[2]>12)mFirst++;
+  });
+  if(iso)return"iso";
+  if(dFirst&&!mFirst)return"dmy";
+  return"mdy";
+}
+function p2(n){return String(n).padStart(2,"0")}
+function toISODate(raw,fmt){
+  const s=String(raw||"").trim();
+  let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if(m)return`${m[1]}-${p2(+m[2])}-${p2(+m[3])}`;
+  m=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/);
+  if(!m)return s.slice(0,10);
+  let y=m[3];if(y.length===2)y=(+y>70?"19":"20")+y;
+  const A=+m[1],B=+m[2];
+  const mo=fmt==="dmy"?B:A, d=fmt==="dmy"?A:B;
+  return`${y}-${p2(mo)}-${p2(d)}`;
+}
+const BAD_STATUS=/^\s*(failed|fallida|cancel|anulad|rechaz|pending|pendiente)/i;
+function parseCsvTable(text){
+  const lines=String(text||"").split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<2)return null;
   const hdr=parseCSVLine(lines[0]).map(h=>h.trim());
-  const iDate=hdr.indexOf("Date (UTC)"),iDesc=hdr.indexOf("Description"),iAmt=hdr.indexOf("Amount"),iStat=hdr.indexOf("Status"),iSrc=hdr.indexOf("Source Account"),iBD=hdr.indexOf("Bank Description");
-  if(iDate<0||iAmt<0)return null;
-  return lines.slice(1).map(l=>{
-    const c=parseCSVLine(l);
-    const raw=c[iDate]||"";const m=raw.match(/^(\d{2})-(\d{2})-(\d{4})/);
-    const date=m?`${m[3]}-${m[1]}-${m[2]}`:raw.slice(0,10);
-    const bd=iBD>=0?c[iBD]:"";
-    return{date,description:c[iDesc]||"",amount:parseFloat(c[iAmt])||0,accountId:detectAccount(iSrc>=0?c[iSrc]:""),kind:isInternalXfer(bd)?"transfer":"",status:iStat>=0?c[iStat]:"Sent",bankDesc:bd};
-  }).filter(r=>r.status==="Sent");
+  const cells=lines.slice(1).map(parseCSVLine).filter(c=>c.length>1);
+  if(!cells.length)return null;
+  const taken=[];
+  const pick=k=>{const i=guessCol(hdr,CSV_SYN[k],taken);if(i>=0)taken.push(i);return i};
+  const map={date:pick("date"),desc:pick("desc"),amount:pick("amount"),debit:pick("debit"),credit:pick("credit"),status:pick("status"),src:pick("src"),bankDesc:pick("bankDesc")};
+  if(map.date<0||(map.amount<0&&map.debit<0&&map.credit<0))return null;
+  const fmt=detectDateFmt(cells.map(c=>c[map.date]));
+  return{hdr,cells,map,fmt};
+}
+function csvRowsToTx(t,map,fmt,acctId){
+  return t.cells.map(c=>{
+    let amt;
+    if(map.amount>=0)amt=parseAmount(c[map.amount]);
+    else{
+      const d=Math.abs(parseAmount(map.debit>=0?c[map.debit]:0));
+      const cr=Math.abs(parseAmount(map.credit>=0?c[map.credit]:0));
+      amt=cr-d;
+    }
+    const bd=map.bankDesc>=0?(c[map.bankDesc]||""):"";
+    const st=map.status>=0?(c[map.status]||""):"";
+    return{date:toISODate(c[map.date],fmt),description:(map.desc>=0?c[map.desc]:"")||"",amount:amt,accountId:acctId||detectAccount(map.src>=0?c[map.src]:""),kind:isInternalXfer(bd)?"transfer":"",status:st||"Sent",bankDesc:bd};
+  }).filter(r=>!BAD_STATUS.test(r.status)&&/^\d{4}-\d{2}-\d{2}$/.test(r.date));
+}
+function parseBankData(text){
+  text=String(text||"").trim();
+  if(text.startsWith("[")){try{const arr=JSON.parse(text);return arr.map(t=>({date:(t.date||"").slice(0,10),description:t.description||"",amount:parseFloat(t.amount)||0,accountId:t.accountId||"",kind:t.kind||"",status:"Sent",bankDesc:t.note||""}));}catch(e){return null}}
+  const t=parseCsvTable(text);
+  if(!t)return null;
+  return csvRowsToTx(t,t.map,t.fmt,"");
 }
 function daysDiff(a,b){return Math.abs((new Date(a+"T00:00:00")-new Date(b+"T00:00:00"))/86400000)}
 function runReconcile(){
@@ -1314,7 +1386,7 @@ function renderSettings(){
     <button class="btn btn-ghost btn-sm" onclick="checkForUpdate(false)">Comprobar si hay versión nueva</button>
   </div>
   <div class="card"><div class="section-title">📅 Años Fiscales</div><div style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><input id="new-year" type="number" placeholder="2026" style="width:120px" min="2020" max="2099"><button class="btn btn-primary btn-sm" onclick="addYear()">+ Agregar</button></div><div style="display:flex;gap:8px;flex-wrap:wrap">${S.years.map(y=>`<div style="display:flex;align-items:center;gap:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:6px 12px"><span style="font-family:var(--serif);font-size:15px;color:#3b82f6;font-weight:600">${y}</span><button onclick="removeYear(${y})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px">🗑</button></div>`).join("")}</div></div>
-  <div class="card" style="border-color:rgba(16,185,129,.3)"><div class="section-title">💾 Exportar / Importar</div><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#6ee7b7;line-height:1.7">⚠️ Exporta antes de actualizar en Netlify. El backup incluye TODOS los años.</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="exportAllData()">⬇️ Exportar JSON (todos los años)</button><button class="btn btn-ghost btn-sm" onclick="exportTxns()">⬇️ CSV ${S.year}</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-json')">⬆️ Importar JSON</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-csv')">⬆️ Importar CSV Mercury</button></div></div>
+  <div class="card" style="border-color:rgba(16,185,129,.3)"><div class="section-title">💾 Exportar / Importar</div><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#6ee7b7;line-height:1.7">⚠️ Exporta antes de actualizar en Netlify. El backup incluye TODOS los años.</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="exportAllData()">⬇️ Exportar JSON (todos los años)</button><button class="btn btn-ghost btn-sm" onclick="exportTxns()">⬇️ CSV ${S.year}</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-json')">⬆️ Importar JSON</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-csv')">⬆️ Importar CSV bancario</button></div></div>
 <div class="card" style="margin-bottom:14px"><div class="section-title">☁️ Sesión y Sincronización</div>${USER?`<div style="font-size:12px;margin-bottom:4px">Conectado como <strong>${escHtml(USER.email||"")}</strong></div><div style="font-size:11px;color:#10b981;margin-bottom:12px">✅ Sincronizando con la nube — tus datos están en todos tus dispositivos</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="showModal('migrate')">☁️ Subir datos locales a la nube</button><button class="btn btn-ghost btn-sm" onclick="authLogout()">🚪 Cerrar sesión</button></div>`:`<div style="font-size:12px;color:#f59e0b;margin-bottom:6px">${OFFLINE?"📴 Modo local (sin conexión)":"⚠️ Sin configurar Supabase"}</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Los datos se guardan solo en este navegador y <strong>no</strong> se sincronizan con el móvil. ${OFFLINE?'<a href="#" onclick="location.reload();return false" style="color:#3b82f6">Reconectar</a>':""}</div>`}</div>
   <div class="card" style="border-color:rgba(239,68,68,.3)"><div class="section-title" style="color:#ef4444">⚠️ Zona de Peligro</div><button class="btn btn-danger btn-sm" onclick="clearYearData()">🗑 Borrar datos de ${S.year}</button></div></div>`;
 }
@@ -1366,11 +1438,12 @@ function showModal(type){
   if(type==="add-coa")html=`<div class="modal"><div class="modal-title">Nueva Cuenta Contable</div><div class="input-row"><div><label>Código *</label><input id="c-code" style="width:90px" placeholder="5210"></div><div style="flex:1"><label>Nombre *</label><input id="c-name" style="width:100%"></div></div><div class="input-row"><div><label>Tipo</label><select id="c-type"><option value="expense">expense</option><option value="revenue">revenue</option><option value="asset">asset</option><option value="liability">liability</option><option value="equity">equity</option></select></div><div><label>Grupo</label><input id="c-group" style="width:120px" value="misc"></div></div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="addCoaEntry()">Agregar</button></div></div>`;
   if(type==="migrate")html=`<div class="modal"><div class="modal-title">☁️ Subir tus datos a la nube</div><p style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:12px">Detecté datos guardados en <strong>este navegador</strong> que aún no están en la nube. Súbelos ahora y quedarán disponibles en todos tus dispositivos (incluido el móvil).</p><div style="font-size:11px;color:var(--muted);background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:6px;padding:10px;line-height:1.6">💡 Hazlo desde la computadora donde tienes tu historial completo. Si lo haces desde un equipo vacío, no se sube nada (no se borra nada tampoco).</div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Ahora no</button><button class="btn btn-primary" onclick="runMigration()">☁️ Subir a la nube</button></div></div>`;
   if(type==="import-json")html=`<div class="modal"><div class="modal-title">Importar JSON</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Pega el JSON exportado desde ContaFlow (v1 o v2) o un array de transacciones.</p><textarea id="import-text" rows="10" style="width:100%;resize:vertical;font-family:monospace;font-size:11px" placeholder='[{"id":"...","date":"2025-01-01","amount":100}]'></textarea><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="importJSON()">Importar</button></div></div>`;
-  if(type==="import-csv")html=`<div class="modal"><div class="modal-title">Importar CSV de Mercury</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Selecciona el archivo CSV exportado de Mercury, o pega su contenido abajo. Se excluyen automáticamente las transacciones fallidas y se detectan las transferencias internas.</p>
+  if(type==="import-csv")html=`<div class="modal" style="max-width:720px"><div class="modal-title">Importar CSV bancario</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Sirve para <strong>cualquier banco</strong> (Mercury, Banco Popular, etc.). Selecciona el archivo o pega su contenido: detecto las columnas solo, pero puedes corregirlas y ver una vista previa antes de importar.</p>
   <input type="file" id="csv-file" accept=".csv,text/csv" style="margin-bottom:10px;font-size:12px" onchange="loadCsvFile(this)">
-  <textarea id="csv-text" rows="8" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Date (UTC),Description,Amount,Status,Source Account,..."></textarea>
-  <div style="margin-top:8px;font-size:10px;color:var(--muted)">⚠️ Se importa al año seleccionado actualmente (<strong>${S.year}</strong>). Las filas de otros años se omiten — cambia de año e importa de nuevo para procesarlas.</div>
-  <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="importCSV()">Importar</button></div></div>`;
+  <textarea id="csv-text" rows="5" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Date,Description,Amount" oninput="CSVIMP.t=null"></textarea>
+  <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="analizarCSV()">🔍 Analizar</button></div>
+  <div id="csv-preview"></div>
+  <div class="modal-footer"><button class="btn btn-ghost" onclick="CSVIMP={t:null,map:null,fmt:'mdy',acct:''};closeModal()">Cerrar</button></div></div>`;
   if(type==="sync-options")html=`<div class="modal"><div class="modal-title">Opciones de Sincronización</div><div style="display:flex;flex-direction:column;gap:10px"><div class="card card-sm" style="border-color:rgba(16,185,129,.3)"><div style="font-size:13px;font-weight:600;color:#10b981;margin-bottom:4px">1️⃣ API Directa</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Configuración → Mercury API Key → pega tu key de <code>app.mercury.com → Settings → API</code></div></div><div class="card card-sm"><div style="font-size:13px;font-weight:600;color:#3b82f6;margin-bottom:4px">2️⃣ Importar desde Claude</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Pide en Claude.ai: "Exporta mis transacciones Mercury 2025 como JSON". Luego Configuración → Importar JSON.</div></div></div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cerrar</button><button class="btn btn-primary" onclick="closeModal();goTab('settings')">Ir a Configuración →</button></div></div>`;
   const bg=document.createElement("div");bg.className="modal-bg";bg.id="active-modal";bg.innerHTML=html;bg.addEventListener("click",e=>{if(e.target===bg)closeModal()});document.getElementById("modal-container").appendChild(bg);
 }
@@ -1419,18 +1492,62 @@ async function importJSON(){
   }catch(e){toast("❌ Error JSON: "+e.message)}
 }
 
+let CSVIMP={t:null,map:null,fmt:"mdy",acct:""};
 function loadCsvFile(input){
   const f=input.files&&input.files[0];if(!f)return;
   const reader=new FileReader();
-  reader.onload=e=>{document.getElementById("csv-text").value=e.target.result;toast(`📄 ${f.name} cargado — presiona Importar`)};
+  reader.onload=e=>{document.getElementById("csv-text").value=e.target.result;analizarCSV()};
   reader.onerror=()=>toast("❌ No pude leer el archivo");
   reader.readAsText(f);
 }
+function csvColSelect(campo,label,opcional){
+  const h=CSVIMP.t.hdr;
+  return`<div style="flex:1;min-width:130px"><label>${label}${opcional?' <span style="opacity:.5">(opcional)</span>':''}</label><select style="width:100%" onchange="CSVIMP.map.${campo}=+this.value;renderCsvPreview()">${opcional?`<option value="-1"${CSVIMP.map[campo]<0?" selected":""}>— ninguna —</option>`:""}${h.map((x,i)=>`<option value="${i}"${CSVIMP.map[campo]===i?" selected":""}>${escHtml(x||"(col "+(i+1)+")")}</option>`).join("")}</select></div>`;
+}
+function analizarCSV(){
+  const text=(document.getElementById("csv-text")||{}).value||"";
+  const t=parseCsvTable(text.trim());
+  if(!t){document.getElementById("csv-preview").innerHTML=`<div style="font-size:11px;color:#f59e0b;padding:10px">❌ No reconocí las columnas. Necesito al menos una columna de fecha y una de monto (o Débito/Crédito).</div>`;return;}
+  CSVIMP={t,map:{...t.map},fmt:t.fmt,acct:CSVIMP.acct||""};
+  renderCsvPreview();
+}
+function renderCsvPreview(){
+  const box=document.getElementById("csv-preview");if(!box||!CSVIMP.t)return;
+  const rows=csvRowsToTx(CSVIMP.t,CSVIMP.map,CSVIMP.fmt,CSVIMP.acct);
+  const inYear=rows.filter(r=>r.date.startsWith(String(S.year)));
+  const ing=inYear.filter(r=>r.amount>0),gas=inYear.filter(r=>r.amount<0);
+  const sIng=ing.reduce((s,r)=>s+r.amount,0),sGas=gas.reduce((s,r)=>s+r.amount,0);
+  const acctOpts=`<option value="">— detectar automáticamente —</option>`+S.bankAccounts.map(a=>`<option value="${a.id}"${CSVIMP.acct===a.id?" selected":""}>${escHtml(a.name)}</option>`).join("");
+  const muestra=inYear.slice(0,6).map(r=>`<tr><td style="white-space:nowrap;color:var(--muted)">${r.date}</td><td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.description)}</td><td style="text-align:right;font-weight:600;color:${r.amount>=0?'#10b981':'#ef4444'}">${fmt(r.amount)}</td></tr>`).join("");
+  box.innerHTML=`
+  <div class="card card-sm" style="margin-top:12px">
+    <div class="section-title">1 · ¿Qué columna es cada cosa?</div>
+    <div class="input-row" style="flex-wrap:wrap;gap:8px">${csvColSelect("date","Fecha")}${csvColSelect("desc","Descripción",1)}</div>
+    <div class="input-row" style="flex-wrap:wrap;gap:8px;margin-top:8px">${csvColSelect("amount","Monto (con signo)",1)}${csvColSelect("debit","Débito / Cargo",1)}${csvColSelect("credit","Crédito / Abono",1)}</div>
+    <div class="input-row" style="flex-wrap:wrap;gap:8px;margin-top:8px">
+      <div style="flex:1;min-width:130px"><label>Formato de fecha</label><select style="width:100%" onchange="CSVIMP.fmt=this.value;renderCsvPreview()">
+        <option value="mdy"${CSVIMP.fmt==="mdy"?" selected":""}>MM/DD/AAAA (EE.UU. / PR)</option>
+        <option value="dmy"${CSVIMP.fmt==="dmy"?" selected":""}>DD/MM/AAAA (Europa)</option>
+        <option value="iso"${CSVIMP.fmt==="iso"?" selected":""}>AAAA-MM-DD</option></select></div>
+      <div style="flex:1;min-width:130px"><label>Cuenta bancaria</label><select style="width:100%" onchange="CSVIMP.acct=this.value;renderCsvPreview()">${acctOpts}</select></div>
+    </div>
+  </div>
+  <div class="card card-sm" style="margin-top:10px">
+    <div class="section-title">2 · Revisa que los signos estén bien</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;margin-bottom:8px">
+      <div>📥 <strong style="color:#10b981">${ing.length}</strong> ingresos · ${fmt(sIng)}</div>
+      <div>📤 <strong style="color:#ef4444">${gas.length}</strong> gastos · ${fmt(sGas)}</div>
+      <div>🧮 Neto: <strong>${fmt(sIng+sGas)}</strong></div>
+    </div>
+    ${inYear.length?`<div style="overflow-x:auto"><table style="font-size:11px"><thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right">Monto</th></tr></thead><tbody>${muestra}</tbody></table></div>`:`<div style="font-size:11px;color:#f59e0b">⚠️ Ninguna fila cae en ${S.year}. Revisa el formato de fecha o cambia de año.</div>`}
+    <div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.6">Si los ingresos aparecen como gastos, cambia las columnas Débito/Crédito o usa la columna de monto con signo.</div>
+  </div>
+  <div style="margin-top:10px;font-size:10px;color:var(--muted)">${rows.length-inYear.length} filas de otros años se omitirán · se importa a <strong>${S.year}</strong> · empresa: <strong>${escHtml(activeCompany().name)}</strong></div>
+  <div style="margin-top:10px"><button class="btn btn-primary" onclick="importCSV()" ${inYear.length?"":"disabled"}>✅ Importar ${inYear.length} transacciones</button></div>`;
+}
 async function importCSV(){
-  const text=document.getElementById("csv-text").value.trim();
-  if(!text)return toast("⚠️ Selecciona un archivo o pega el contenido");
-  const rows=parseBankData(text);
-  if(!rows||!rows.length)return toast("❌ No pude leer el CSV. ¿Es el formato de Mercury?");
+  if(!CSVIMP.t)return toast("⚠️ Primero pega o selecciona el CSV y presiona Analizar");
+  const rows=csvRowsToTx(CSVIMP.t,CSVIMP.map,CSVIMP.fmt,CSVIMP.acct);
   const inYear=rows.filter(r=>r.date.startsWith(String(S.year)));
   const skippedYear=rows.length-inYear.length;
   if(!inYear.length)return toast(`⚠️ Ninguna fila es del año ${S.year}. Cambia de año e intenta de nuevo.`);
@@ -1441,6 +1558,7 @@ async function importCSV(){
   const dupes=mapped.length-fresh.length;
   S.txns=[...S.txns,...fresh];await saveTxns();
   if(!S.years.includes(S.year)){S.years=[...S.years,S.year].sort();await saveYears()}
+  CSVIMP={t:null,map:null,fmt:"mdy",acct:""};
   closeModal();updateSidebar();renderContent();
   toast(`✅ ${fresh.length} importadas${dupes?` · ${dupes} duplicadas omitidas`:""}${skippedYear?` · ${skippedYear} de otros años omitidas`:""}`);
 }
@@ -1872,7 +1990,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.7"; //@build
+const BUILD="2026-09-16.8"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
