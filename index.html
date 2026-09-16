@@ -2091,7 +2091,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.11"; //@build
+const BUILD="2026-09-16.12"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -2155,6 +2155,15 @@ function iniciarVigilanciaVersion(){
 // ═══════════════════════════════════════════════════════════
 const IVU_DEFAULTS={estatal:10.5, municipal:1, especial:4};
 
+function ivuIncluido(){
+  const v=(S.settings.ivuRates||{}).incluido;
+  return v===undefined?true:!!v;
+}
+async function setIvuIncluido(v){
+  S.settings.ivuRates={...(S.settings.ivuRates||{}),incluido:!!v};
+  await saveSettings();renderContent();
+  toast(v?"✅ IVU se extrae de la venta":"⚠️ IVU se añade sobre la venta");
+}
 function ivuRates(){
   const r=S.settings.ivuRates||{};
   return {
@@ -2184,11 +2193,17 @@ function ivuMensual(mes){
     else if(k==="revisar")acc.revisar+=t.amount;
     else acc.sin_clasificar+=t.amount;
   });
-  const estatal=acc.general*(r.estatal/100);
-  const municipal=acc.general*(r.municipal/100);
-  const especial=acc.b2b*(r.especial/100);
-  return {...acc, estatal, municipal, especial, total:estatal+municipal+especial,
-          baseGravable:acc.general+acc.b2b, ventasTotales:acc.general+acc.b2b+acc.exento+acc.revisar+acc.sin_clasificar};
+  // Los montos de banco vienen CON el IVU incluido: hay que extraerlo, no añadirlo.
+  const inc=ivuIncluido();
+  const tGen=(r.estatal+r.municipal)/100, tB2B=r.especial/100;
+  const baseGen=inc?acc.general/(1+tGen):acc.general;
+  const baseB2B=inc?acc.b2b/(1+tB2B):acc.b2b;
+  const estatal=baseGen*(r.estatal/100);
+  const municipal=baseGen*(r.municipal/100);
+  const especial=baseB2B*(r.especial/100);
+  return {...acc, estatal, municipal, especial, total:estatal+municipal+especial, incluido:inc,
+          baseGen, baseB2B, baseGravable:baseGen+baseB2B,
+          ventasTotales:acc.general+acc.b2b+acc.exento+acc.revisar+acc.sin_clasificar};
 }
 
 // Vencimiento: día 20 del mes siguiente al periodo
@@ -2223,7 +2238,16 @@ function renderIvu(){
 
   return`<div style="max-width:940px">
   <div style="font-size:15px;font-weight:600;margin-bottom:6px">IVU · ${S.year}</div>
-  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">${escHtml(co.name)} · ${escHtml(co.state||"Puerto Rico")} · Planilla Mensual SC 2915 vía SURI</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${escHtml(co.name)} · ${escHtml(co.state||"Puerto Rico")} · Planilla Mensual SC 2915 vía SURI</div>
+  <div class="card card-sm" style="margin-bottom:16px;border-color:${anual.incluido?"rgba(16,185,129,.3)":"rgba(245,158,11,.4)"}">
+    <label style="display:flex;align-items:center;gap:9px;font-size:12px;cursor:pointer">
+      <input type="checkbox" ${anual.incluido?"checked":""} onchange="setIvuIncluido(this.checked)">
+      <span>Los montos registrados <strong>ya incluyen el IVU</strong> cobrado al cliente</span>
+    </label>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:7px;line-height:1.6">${anual.incluido
+      ?`Activado: de cada venta se <strong>extrae</strong> el IVU (÷ 1.115). Es lo correcto cuando los montos vienen del banco o de Stripe, porque el depósito ya trae el impuesto dentro.`
+      :`⚠️ Desactivado: el IVU se <strong>añade</strong> sobre la venta. Solo correcto si registras las ventas sin impuesto. Con datos del banco esto te haría remitir de más.`}</div>
+  </div>
 
   <div class="grid" style="margin-bottom:16px">
     <div class="card kpi"><div class="kpi-label">Ventas Gravables</div><div class="kpi-val" style="color:#10b981">${fmt(anual.baseGravable)}</div><div class="kpi-sub">base del cálculo</div></div>
