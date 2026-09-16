@@ -655,7 +655,7 @@ async function loadState(){
   try{
     const s=await dbGet("settings");if(s)S.settings={...S.settings,...s};
     const c=await dbGet("coa");if(c)S.coa=c;
-    const b=await dbGet("bankAccts");if(b)S.bankAccounts=b;
+    const b=await dbGet("bankAccts");if(b)S.bankAccounts=b;else if(S.companyId!==LEGACY_CO)S.bankAccounts=[];
     const y=await dbGet("years");if(y){S.years=y;S.year=y[y.length-1]||2025;}
     const bg=await dbGet("budget");if(bg)S.budget=bg;
     const be=await dbGet("balanceEntries");if(be)S.balanceEntries=be;
@@ -917,6 +917,24 @@ function renderBalance(){
 async function removeBalanceEntry(id){S.balanceEntries=S.balanceEntries.filter(e=>e.id!==id);await saveBalanceEntries();renderContent();}
 
 function renderProjects(){
+  if(!activeProjects().length){
+    const hay=(S.projects||[]).length;
+    const rev=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header").length;
+    return`<div style="max-width:620px">
+      <div style="font-size:15px;font-weight:600;margin-bottom:14px">Reportes por Proyecto</div>
+      <div class="card" style="text-align:center;padding:38px 26px">
+        <div style="font-size:34px;margin-bottom:12px">📁</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px">${hay?`Todos los proyectos de ${escHtml(S.settings.companyName)} están ocultos`:`${escHtml(S.settings.companyName)} todavía no tiene proyectos`}</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.8;max-width:44ch;margin:0 auto 18px">
+          ${hay
+            ? 'Están ocultos manualmente o por la opción de ocultar los que no tienen movimiento. Puedes mostrarlos desde Configuración.'
+            : 'Un proyecto agrupa una o más cuentas de ingreso para ver cuánto aporta cada línea de negocio. Los proyectos son propios de cada empresa: los de otra empresa no se comparten aquí.'}
+        </div>
+        ${!hay&&rev===0?'<div style="font-size:11px;color:#f59e0b;line-height:1.7;margin-bottom:16px">⚠️ Antes necesitas cuentas de ingreso en tu Plan de Cuentas — un proyecto se define por las cuentas que agrupa.</div>':""}
+        <button class="btn btn-primary btn-sm" onclick="goTab('settings')">${hay?"Ir a Configuración":"Crear el primer proyecto"}</button>
+      </div>
+    </div>`;
+  }
   const txs=S.txns.filter(t=>t.kind!=="transfer"),tR=txs.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0),tE=txs.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
   const cards=activeProjects().map(p=>{const rev=txs.filter(t=>t.amount>0&&p.codes.includes(t.coaCode)).reduce((s,t)=>s+t.amount,0);const pct=tR>0?(rev/tR*100).toFixed(1):0;const net=rev-(tR>0?tE*(rev/tR):0);const cnt=txs.filter(t=>p.codes.includes(t.coaCode)).length;return`<div class="card" style="border-left:4px solid ${p.color};flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:20px">${p.icon}</span><div><div style="font-size:13px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${cnt} transacciones</div></div></div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:${p.color};margin-bottom:4px">${fmt(rev)}</div><div class="bar-wrap"><div class="bar-fill" style="background:${p.color};width:${pct}%"></div></div><div style="font-size:10px;color:var(--muted);margin-top:3px">${pct}% ingresos</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Utilidad est.: <strong style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</strong></div></div>`;}).join("");
   const tRows=Array.from({length:12},(_,m)=>{const cols=activeProjects().map(p=>{const v=txs.filter(t=>t.amount>0&&p.codes.includes(t.coaCode)&&getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0);return`<td style="text-align:right;color:${v>0?p.color:'var(--muted)'}">${v>0?fmt(v):"—"}</td>`;}).join("");return`<tr><td style="color:var(--muted)">${MONTHS[m]}</td>${cols}</tr>`;}).join("");
@@ -1705,14 +1723,14 @@ function projectRevenue(p){return S.txns.filter(t=>t.kind!=="transfer"&&t.amount
 
 // Los proyectos que entran en reportes y en el contexto de la IA
 function activeProjects(){
-  let list=(S.projects&&S.projects.length?S.projects:PROJECTS).filter(p=>!p.hidden);
+  let list=(S.projects||[]).filter(p=>!p.hidden);
   if(S.settings.hideEmptyProjects)list=list.filter(p=>projectTxnCount(p)>0);
   return list;
 }
 async function saveProjects(){await dbSet("projects",S.projects)}
 
 function renderProjectSettings(){
-  const list=(S.projects&&S.projects.length?S.projects:PROJECTS);
+  const list=(S.projects||[]);
   const vacios=list.filter(p=>projectTxnCount(p)===0).length;
   const rows=list.map((p,i)=>{
     const n=projectTxnCount(p), rev=projectRevenue(p);
@@ -1742,7 +1760,7 @@ function renderProjectSettings(){
 }
 
 function showProjectModal(idx){
-  if(!S.projects||!S.projects.length)S.projects=PROJECTS.map(p=>({...p}));
+  if(!Array.isArray(S.projects))S.projects=[];
   const p=idx>=0?S.projects[idx]:{id:`p_${Date.now()}`,name:"",icon:"📁",color:"#3b82f6",codes:[]};
   const rev=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
   const html=`<div class="modal">
@@ -1786,14 +1804,14 @@ async function saveProjectForm(idx){
 }
 
 async function toggleProjectHidden(idx){
-  if(!S.projects||!S.projects.length)S.projects=PROJECTS.map(p=>({...p}));
+  if(!Array.isArray(S.projects))S.projects=[];
   S.projects[idx]={...S.projects[idx],hidden:!S.projects[idx].hidden};
   await saveProjects();renderContent();
   toast(S.projects[idx].hidden?"🚫 Proyecto oculto":"👁 Proyecto visible");
 }
 
 async function removeProject(idx){
-  if(!S.projects||!S.projects.length)S.projects=PROJECTS.map(p=>({...p}));
+  if(!Array.isArray(S.projects))S.projects=[];
   const p=S.projects[idx], n=projectTxnCount(p);
   const msg=n>0
     ? `"${p.name}" tiene ${n} transacciones asociadas.\n\nBorrar el proyecto NO borra transacciones — solo deja de agruparlas en el reporte. Si solo quieres que no aparezca, usa Ocultar (🚫) en vez de borrar.\n\n¿Borrar el proyecto?`
