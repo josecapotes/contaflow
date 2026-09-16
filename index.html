@@ -1843,6 +1843,9 @@ function ivuDevengado(mes){
     if(mes!==undefined&&(+String(f.fecha).slice(5,7)-1)!==mes)return;
     acc.facturas++;
     (f.lineas||[]).forEach(l=>{
+      const cta=S.coa.find(x=>x.code===l.coaCode);
+      if(cta&&cta.type!=="revenue")return;    // envíos imputados a gasto no son venta
+      if(l.tipo==="ajuste")return;            // el ajuste de Zoho se aplica DESPUÉS del IVU: no cambia la base
       const c=calcLinea(l);
       if(l.ivu==="11.5")acc.general+=c.base;
       else if(l.ivu==="4")acc.b2b+=c.base;
@@ -2425,6 +2428,8 @@ function parseZoho(text){
     ciudad:zohoCol(hdr,["Billing City"]),
     sub:zohoCol(hdr,["SubTotal"]), tot:zohoCol(hdr,["Total"]), bal:zohoCol(hdr,["Balance"]),
     inclusivo:zohoCol(hdr,["Is Inclusive Tax"]),
+    envio:zohoCol(hdr,["Shipping Charge"]), envioIvu:zohoCol(hdr,["Shipping Charge Tax Amount"]),
+    ajuste:zohoCol(hdr,["Adjustment"]), descFactura:zohoCol(hdr,["Entity Discount Amount"]), redondeo:zohoCol(hdr,["Round Off"]),
     item:zohoCol(hdr,["Item Name"]), desc:zohoCol(hdr,["Item Desc"]),
     cant:zohoCol(hdr,["Quantity"]), precio:zohoCol(hdr,["Item Price"]),
     itot:zohoCol(hdr,["Item Total"]), tax:zohoCol(hdr,["Item Tax"]),
@@ -2443,7 +2448,10 @@ function parseZoho(text){
          estadoZoho:V(c,"estado").trim(),cliente:V(c,"cli").replace(/\s+/g," ").trim(),
          email:V(c,"email").trim(),tel:V(c,"tel").trim(),ciudad:V(c,"ciudad").trim(),
          subZoho:parseAmount(V(c,"sub")),totZoho:parseAmount(V(c,"tot")),balZoho:parseAmount(V(c,"bal")),
-         inclusivo:/true|s[ií]|yes|1/i.test(V(c,"inclusivo")),lineas:[]};
+         inclusivo:/true|s[ií]|yes|1/i.test(V(c,"inclusivo")),
+         envio:parseAmount(V(c,"envio")),envioIvu:parseAmount(V(c,"envioIvu")),
+         ajuste:parseAmount(V(c,"ajuste"))-parseAmount(V(c,"descFactura"))+parseAmount(V(c,"redondeo")),
+         lineas:[]};
       mapa.set(num,f);
     }
     const itot=parseAmount(V(c,"itot"));
@@ -2474,8 +2482,10 @@ function analizarZoho(){
 function renderZohoPreview(){
   const box=document.getElementById("z-preview");if(!box||!ZIMP)return;
   const ing=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
+  const todasCtas=S.coa.filter(c=>c.group!=="header"&&["revenue","expense"].includes(c.type));
   const defG=(document.getElementById("z-cta-grav")||{}).value||"";
   const defE=(document.getElementById("z-cta-exen")||{}).value||"";
+  const defEnv=(document.getElementById("z-cta-envio")||{}).value||"";
   const yaExiste=new Set((S.invoices||[]).map(f=>String(f.numero)));
   const delAnio=ZIMP.arr.filter(f=>String(f.fecha).startsWith(String(S.year)));
   const nuevas=delAnio.filter(f=>!yaExiste.has(f.numero));
@@ -2517,6 +2527,10 @@ function renderZohoPreview(){
       <div style="flex:1;min-width:190px"><label>Líneas gravables</label><select id="z-cta-grav" style="width:100%" onchange="renderZohoPreview()"><option value="">— elegir —</option>${ing.map(c=>`<option value="${c.code}" ${defG===c.code?"selected":""}>${c.code} · ${escHtml(c.name)}</option>`).join("")}</select></div>
       <div style="flex:1;min-width:190px"><label>Líneas exentas</label><select id="z-cta-exen" style="width:100%" onchange="renderZohoPreview()"><option value="">— elegir —</option>${ing.map(c=>`<option value="${c.code}" ${defE===c.code?"selected":""}>${c.code} · ${escHtml(c.name)}</option>`).join("")}</select></div>
     </div>
+    <div class="input-row" style="flex-wrap:wrap;gap:8px;margin-top:8px">
+      <div style="flex:1;min-width:190px"><label>Envíos cobrados al cliente</label><select id="z-cta-envio" style="width:100%" onchange="renderZohoPreview()"><option value="">— igual que las gravables —</option>${todasCtas.map(c=>`<option value="${c.code}" ${defEnv===c.code?"selected":""}>${c.code} · ${escHtml(c.name)}</option>`).join("")}</select></div>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:7px">Zoho cobra el envío y aplica los ajustes <strong>fuera de las líneas</strong>. Se importan como líneas propias para que el total cuadre. Si mandas el envío a la cuenta de fletes, reduce ese gasto en vez de contarse como venta.</div>
   </div>
   <div class="card card-sm" style="margin-top:10px">
     <div class="section-title">2 · Qué va a entrar</div>
@@ -2547,6 +2561,7 @@ async function importarZoho(){
   if(!ZIMP)return toast("⚠️ Primero pega el CSV y analiza");
   const defG=(document.getElementById("z-cta-grav")||{}).value||"";
   const defE=(document.getElementById("z-cta-exen")||{}).value||defG;
+  const defEnv=(document.getElementById("z-cta-envio")||{}).value||defG;
   if(!defG)return toast("⚠️ Elige la cuenta de las líneas gravables");
   const yaExiste=new Set((S.invoices||[]).map(f=>String(f.numero)));
   const nuevas=ZIMP.arr.filter(f=>String(f.fecha).startsWith(String(S.year))&&!yaExiste.has(f.numero));
@@ -2573,6 +2588,11 @@ async function importarZoho(){
     const estado=EST_ZOHO[f.estadoZoho]||"emitida";
     const lineas=f.lineas.map(l=>({desc:l.desc,cant:l.cant,precio:l.precio,ivu:l.ivu,
       coaCode:l.ivu==="exento"?defE:defG}));
+    // Zoho cobra el envío y aplica ajustes FUERA de las líneas. Sin esto el total no cuadra.
+    if(Math.abs(f.envio||0)>0.005)lineas.push({desc:"Envío cobrado al cliente",cant:1,precio:f.envio,
+      ivu:Math.abs(f.envioIvu||0)>0.005?"11.5":"exento",coaCode:defEnv,tipo:"envio"});
+    if(Math.abs(f.ajuste||0)>0.005)lineas.push({desc:f.ajuste<0?"Descuento / ajuste":"Ajuste de factura",cant:1,
+      precio:f.ajuste,ivu:"exento",coaCode:defG,tipo:"ajuste"});
     const base={id:`inv_zoho_${Date.now()}_${k}`,numero:f.numero,
       clienteId:idPorNom.get((f.cliente||"").toLowerCase())||"",
       fecha:f.fecha,vence:f.vence||"",estado,lineas,nota:"Importada de Zoho Books",
@@ -2683,6 +2703,8 @@ function ingresoPorCuenta(mes){
         const b=(Number(l.cant)||0)*(Number(l.precio)||0);
         if(!b)return;
         const c=l.coaCode||"4090";
+        const cta=S.coa.find(x=>x.code===c);
+        if(cta&&cta.type!=="revenue")return;    // un envío cobrado va contra el gasto, no es venta
         map[c]=(map[c]||0)+b;
       });
     });
@@ -2706,6 +2728,18 @@ function gastoPorCuenta(mes){
     .forEach(t=>{const c=t.coaCode||"5900";
       if((S.coa.find(x=>x.code===c)||{}).type!=="expense")return;   // pagos de IVU y de préstamo no son gasto
       map[c]=(map[c]||0)+Math.abs(t.amount)});
+  if(modoFacturacion()==="factura"){
+    // Envíos y cargos cobrados al cliente que se imputan a una cuenta de gasto: la reducen.
+    facturasDelAnio().forEach(f=>{
+      if(["borrador","anulada"].includes(estadoFactura(f)))return;
+      if(mes!==undefined&&(+String(f.fecha).slice(5,7)-1)!==mes)return;
+      (f.lineas||[]).forEach(l=>{
+        const cta=S.coa.find(x=>x.code===l.coaCode);
+        if(!cta||cta.type!=="expense")return;
+        map[l.coaCode]=(map[l.coaCode]||0)-((Number(l.cant)||0)*(Number(l.precio)||0));
+      });
+    });
+  }
   return map;
 }
 function gastoTotal(mes){return Object.values(gastoPorCuenta(mes)).reduce((s,v)=>s+v,0)}
@@ -3458,7 +3492,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.21"; //@build
+const BUILD="2026-09-16.22"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
