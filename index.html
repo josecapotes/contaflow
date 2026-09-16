@@ -418,6 +418,7 @@ const TABS=[
   {id:"invoices",icon:"🧾",label:"Facturas",s:"ventas",fact:1},
   {id:"customers",icon:"👥",label:"Clientes",s:"ventas",fact:1},
   {id:"products",icon:"📦",label:"Productos",s:"ventas",fact:1},
+  {id:"cobros",icon:"💵",label:"Cobros",s:"ventas",fact:1},
   {id:"txns",icon:"💳",label:"Transacciones",s:"datos"},
   {id:"reconcile",icon:"🔗",label:"Conciliación",s:"datos"},
   {id:"transfers",icon:"🔄",label:"Transferencias",s:"datos"},
@@ -952,7 +953,7 @@ function renderDashboard(){
   const topInc=Object.entries(incMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const recent=[...txs].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
   const qRows=QUARTERS.map(q=>{const qi=q.months.reduce((s,m)=>s+ingresoTotal(m),0);const qe=q.months.reduce((s,m)=>s+gastoTotal(m),0);return`<tr><td style="color:var(--muted)">${q.label}</td><td style="color:#10b981;text-align:right">${qi>0?fmt(qi):"—"}</td><td style="color:#ef4444;text-align:right">${qe>0?fmt(qe):"—"}</td><td style="text-align:right;color:${(qi-qe)>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(qi-qe)}</td></tr>`;}).join("");
-  return avisoDobleConteo()+avisoCuentasInexistentes()+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
+  return avisoDobleConteo()+avisoCuentasInexistentes()+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Bruta</div><div class="kpi-val" style="color:#10b981">${fmt(utilidadBruta())}</div><div class="kpi-sub">Margen bruto ${margenBruto().toFixed(1)}% · costo ${fmt(costoVentas())}</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:2;min-width:260px"><div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span>Ingresos vs Gastos · ${S.year}</span><div style="display:flex;gap:10px;font-size:10px;color:var(--muted)"><span><span style="display:inline-block;width:8px;height:8px;background:#10b981;border-radius:2px;margin-right:3px"></span>Ing</span><span><span style="display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:2px;margin-right:3px"></span>Gas</span></div></div><div class="chart-wrap">${svg}</div></div><div class="card" style="flex:1;min-width:180px"><div class="section-title">Por Trimestre</div><table style="font-size:11px"><thead><tr><th>Q</th><th style="text-align:right">Ing</th><th style="text-align:right">Gas</th><th style="text-align:right">Neto</th></tr></thead><tbody>${qRows}</tbody></table></div></div>
   ${(()=>{const sg=salidasNoGasto();const tot=Object.values(sg).reduce((a,b)=>a+b,0);if(tot<0.01)return "";
   return `<div class="card" style="margin-bottom:18px"><div class="section-title">Salidas que no son gasto · ${fmt(tot)}</div>
@@ -972,7 +973,15 @@ function renderPL(){
   return avisoDobleConteo()+`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Estado de Resultados</div><div style="display:flex;gap:8px"><button class="btn btn-purple btn-sm" onclick="aiSummarizePL()">🤖 Resumen IA</button><button class="btn btn-ghost btn-sm" onclick="exportPL()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="printCpaPacket()">🖨 Paquete CPA</button></div></div>
   <div class="card" style="margin-bottom:16px"><div style="text-align:center;margin-bottom:18px"><div style="font-family:var(--serif);font-size:20px;font-weight:600">${escHtml(S.settings.companyName)}</div><div style="font-size:12px;color:var(--muted)">Estado de Resultados · Año Fiscal ${S.year} · Base de Efectivo</div></div>
   <table><tbody><tr class="pl-section"><td colspan="2">INGRESOS</td></tr>${(()=>{const fct=modoFacturacion()==="factura"?cuentasFacturadas():null;return revA.map(a=>{const v=sum(a.code);if(!(v>0))return "";const sf=fct&&!fct.has(a.code);return `<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}${sf?' <span class="tag tag-gold" style="font-size:9px">sin factura</span>':""}</td><td style="text-align:right;color:#10b981">${fmt(v)}</td></tr>`}).join("")})()}<tr class="pl-total" style="color:#10b981"><td>TOTAL INGRESOS</td><td style="text-align:right">${fmt(tR)}</td></tr>
-  <tr class="pl-section"><td colspan="2">GASTOS OPERATIVOS</td></tr>${expA.map(a=>{const v=sum(a.code);return v>0?`<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}</td><td style="text-align:right;color:#ef4444">(${fmt(v,true)})</td></tr>`:""}).join("")}<tr class="pl-total" style="color:#ef4444"><td>TOTAL GASTOS</td><td style="text-align:right">(${fmt(tE,true)})</td></tr>
+  ${(()=>{const cg=expA.filter(a=>esCogs(a.code)&&sum(a.code)>0);if(!cg.length)return "";
+    const tc=costoVentas(),ub=utilidadBruta(),mb=margenBruto();
+    return `<tr class="pl-section"><td colspan="2">COSTO DE VENTAS</td></tr>`+
+      cg.map(a=>`<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}</td><td style="text-align:right;color:#ef4444">(${fmt(sum(a.code),true)})</td></tr>`).join("")+
+      `<tr class="pl-total" style="color:#ef4444"><td>Total Costo de Ventas</td><td style="text-align:right">(${fmt(tc,true)})</td></tr>`+
+      `<tr class="pl-net" style="color:${ub>=0?'#10b981':'#ef4444'};background:rgba(16,185,129,.06)"><td>UTILIDAD BRUTA</td><td style="text-align:right">${fmt(ub)}</td></tr>`+
+      `<tr><td style="padding:4px 10px 10px;font-size:11px;color:var(--muted)">Margen bruto</td><td style="text-align:right;padding:4px 10px 10px;font-size:11px;color:var(--muted)">${mb.toFixed(1)}%</td></tr>`;
+  })()}
+  <tr class="pl-section"><td colspan="2">GASTOS OPERATIVOS</td></tr>${expA.filter(a=>!esCogs(a.code)).map(a=>{const v=sum(a.code);return v>0?`<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}</td><td style="text-align:right;color:#ef4444">(${fmt(v,true)})</td></tr>`:""}).join("")}<tr class="pl-total" style="color:#ef4444"><td>TOTAL GASTOS</td><td style="text-align:right">(${fmt(tE,true)})</td></tr>
   <tr class="pl-net" style="color:${net>=0?'#10b981':'#ef4444'}"><td>UTILIDAD NETA</td><td style="text-align:right">${fmt(net)}</td></tr>${tR>0?`<tr><td style="padding:4px 10px 10px;font-size:11px;color:var(--muted)">Margen</td><td style="text-align:right;padding:4px 10px 10px;font-size:11px;color:${net>=0?'#10b981':'#ef4444'}">${((net/tR)*100).toFixed(1)}%</td></tr>`:""}</tbody></table></div>
   <div id="pl-ai-result"></div>
   <div class="card" style="background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.25)"><div style="font-size:11px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠️ Nota Fiscal · Florida LLC Pass-Through</div><div style="font-size:11px;color:var(--muted);line-height:1.7">${taxNote}<br>Consulta tu CPA (Form 1040 + Schedule C · vence 15 Abr). Annual Report Sunbiz: 1 Mayo · $138.75.</div></div></div>`;
@@ -1130,7 +1139,7 @@ function renderTaxes(){
   const qData=QUARTERS.map(q=>{const inc=txs.filter(t=>t.amount>0&&q.months.includes(getTxMonth(t))).reduce((s,t)=>s+t.amount,0);const exp=txs.filter(t=>t.amount<0&&q.months.includes(getTxMonth(t))).reduce((s,t)=>s+Math.abs(t.amount),0);const net=inc-exp,se=net>0?net*.9235*.153:0,it=net>0?(net-se/2)*.10:0;const due=q.label==="Q1"?"Apr 15":q.label==="Q2"?"Jun 15":q.label==="Q3"?"Sep 15":"Jan 15";return{q:q.label,inc,exp,net,se,it,tot:se+it,due};});
   const aN=txs.reduce((s,t)=>s+t.amount,0),aSE=aN>0?aN*.9235*.153:0,aIT=aN>0?(aN-aSE/2)*.10:0,aTot=aSE+aIT;
   return`<div style="max-width:800px"><div style="font-size:15px;font-weight:600;margin-bottom:6px">Estimado de Impuestos · ${S.year}</div><div style="font-size:11px;color:var(--muted);margin-bottom:16px">Florida LLC Pass-Through · Form 1040 + Schedule C + SE</div>
-  <div class="grid" style="margin-bottom:16px"><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${aN>=0?'#10b981':'#ef4444'}">${fmt(aN)}</div></div><div class="card kpi"><div class="kpi-label">SE Tax Est.</div><div class="kpi-val" style="color:var(--red)">${fmt(aSE)}</div><div class="kpi-sub">15.3% × 92.35%</div></div><div class="card kpi"><div class="kpi-label">Income Tax Est.</div><div class="kpi-val" style="color:var(--red)">${fmt(aIT)}</div><div class="kpi-sub">~10% bracket</div></div><div class="card kpi"><div class="kpi-label">Total Impuestos</div><div class="kpi-val" style="color:var(--red)">${fmt(aTot)}</div><div class="kpi-sub">${aN>0?((aTot/aN)*100).toFixed(1)+"% efectivo":"—"}</div></div></div>
+  <div class="grid" style="margin-bottom:16px"><div class="card kpi"><div class="kpi-label">Utilidad Bruta</div><div class="kpi-val" style="color:#10b981">${fmt(utilidadBruta())}</div><div class="kpi-sub">Margen bruto ${margenBruto().toFixed(1)}% · costo ${fmt(costoVentas())}</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${aN>=0?'#10b981':'#ef4444'}">${fmt(aN)}</div></div><div class="card kpi"><div class="kpi-label">SE Tax Est.</div><div class="kpi-val" style="color:var(--red)">${fmt(aSE)}</div><div class="kpi-sub">15.3% × 92.35%</div></div><div class="card kpi"><div class="kpi-label">Income Tax Est.</div><div class="kpi-val" style="color:var(--red)">${fmt(aIT)}</div><div class="kpi-sub">~10% bracket</div></div><div class="card kpi"><div class="kpi-label">Total Impuestos</div><div class="kpi-val" style="color:var(--red)">${fmt(aTot)}</div><div class="kpi-sub">${aN>0?((aTot/aN)*100).toFixed(1)+"% efectivo":"—"}</div></div></div>
   <div class="card card-sm" style="margin-bottom:16px"><div class="section-title">Pagos Trimestrales (Form 1040-ES)</div><div style="overflow-x:auto"><table style="font-size:11px;min-width:580px"><thead><tr><th>Q</th><th style="text-align:right;color:#10b981">Ing.</th><th style="text-align:right;color:#ef4444">Gas.</th><th style="text-align:right">Neto</th><th style="text-align:right">SE Tax</th><th style="text-align:right">Inc. Tax</th><th style="text-align:right;color:var(--red)">Total</th><th>Vence</th></tr></thead><tbody>${qData.map(q=>`<tr><td style="font-weight:600;color:var(--gold)">${q.q}</td><td style="text-align:right;color:#10b981">${q.inc>0?fmt(q.inc):"—"}</td><td style="text-align:right;color:#ef4444">${q.exp>0?fmt(q.exp):"—"}</td><td style="text-align:right;color:${q.net>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(q.net)}</td><td style="text-align:right;color:var(--muted)">${q.se>0?fmt(q.se):"—"}</td><td style="text-align:right;color:var(--muted)">${q.it>0?fmt(q.it):"—"}</td><td style="text-align:right;color:var(--red);font-weight:600">${q.tot>0?fmt(q.tot):"$0"}</td><td><span class="tag tag-gold">${q.due}</span></td></tr>`).join("")}</tbody></table></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap"><div class="card" style="flex:1;min-width:220px;border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.05)"><div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:10px">📅 Calendario Fiscal</div>${[{d:"Abr 15",e:"Form 1040 + Schedule C + Q1"},{d:"May 1",e:"Sunbiz Annual Report ($138.75)"},{d:"Jun 15",e:"Pago Q2 estimado"},{d:"Sep 15",e:"Pago Q3 estimado"},{d:"Ene 15",e:"Pago Q4 estimado"}].map(x=>`<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid rgba(31,41,55,.5)"><span style="color:var(--gold);font-size:11px;min-width:60px">${x.d}</span><span style="font-size:11px">${x.e}</span></div>`).join("")}</div>
   <div class="card" style="flex:1;min-width:220px;border-color:rgba(16,185,129,.3)"><div style="font-size:12px;font-weight:600;color:#10b981;margin-bottom:10px">💡 Estrategias Fiscales</div><div style="font-size:11px;color:var(--muted);line-height:1.9">✅ Home office (Form 8829)<br>✅ Section 179 / Bonus Depreciation<br>✅ SEP-IRA hasta 25% utilidad<br>✅ Health insurance deduction<br>✅ ½ SE Tax deducible<br>✅ Mileage log (67¢/mi)<br>⚠️ Consulta tu CPA</div></div></div></div>`;
@@ -2737,6 +2746,125 @@ async function moverIngresosACobrar(){
   await saveTxns();updateSidebar();renderContent();
   toast(`✅ ${malas.size} movimientos reclasificados como cobros`);
 }
+// ═══ COSTO DE VENTAS vs GASTOS OPERATIVOS ═══
+const GRUPOS_COGS=["cogs","costo","inventory"];
+function esCogs(code){
+  const c=S.coa.find(x=>x.code===code);
+  return !!c&&c.type==="expense"&&GRUPOS_COGS.includes(String(c.group||"").toLowerCase());
+}
+function costoVentas(mes){
+  const g=gastoPorCuenta(mes);
+  return Object.entries(g).filter(([c])=>esCogs(c)).reduce((s,[,v])=>s+v,0);
+}
+function gastosOperativos(mes){
+  const g=gastoPorCuenta(mes);
+  return Object.entries(g).filter(([c])=>!esCogs(c)).reduce((s,[,v])=>s+v,0);
+}
+function utilidadBruta(mes){return ingresoTotal(mes)-costoVentas(mes)}
+function margenBruto(mes){const i=ingresoTotal(mes);return i>0?(utilidadBruta(mes)/i*100):0}
+
+// ═══ COBROS: dónde está el dinero de cada factura ═══
+const METODOS_AL_BANCO=["stripe","ath","tarjeta","transferencia","cheque","cheque_bancario"];
+function todosLosCobros(){
+  const out=[];
+  facturasDelAnio().forEach(f=>{
+    if(estadoFactura(f)==="anulada")return;
+    (f.cobros||[]).forEach(c=>out.push({...c,factura:f.numero,facturaId:f.id,cliente:nombreCliente(f.clienteId)}));
+  });
+  return out.sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+}
+function cobrosPorMetodo(){
+  const map={};
+  todosLosCobros().forEach(c=>{
+    const k=c.metodo||"transferencia";
+    const m=map[k]||(map[k]={n:0,monto:0,comision:0,neto:0});
+    m.n++;m.monto+=Number(c.monto)||0;m.comision+=Number(c.comision)||0;
+    m.neto+=(Number(c.monto)||0)-(Number(c.comision)||0);
+  });
+  return map;
+}
+function efectivoCobrado(){
+  return todosLosCobros().filter(c=>c.metodo==="efectivo").reduce((s,c)=>s+(Number(c.monto)||0),0);
+}
+function entradasAlBanco(){
+  // Depósitos registrados como cobro contra Cuentas por Cobrar
+  return S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&t.coaCode===CTA_POR_COBRAR)
+    .reduce((s,t)=>s+t.amount,0);
+}
+function renderCobros(){
+  const cobros=todosLosCobros();
+  const porM=cobrosPorMetodo();
+  const total=cobros.reduce((s,c)=>s+(Number(c.monto)||0),0);
+  const comis=cobros.reduce((s,c)=>s+(Number(c.comision)||0),0);
+  const efectivo=efectivoCobrado();
+  const esperadoBanco=Object.entries(porM).filter(([k])=>METODOS_AL_BANCO.includes(k)).reduce((s,[,m])=>s+m.neto,0);
+  const realBanco=entradasAlBanco();
+  const brecha=Math.round((esperadoBanco-realBanco)*100)/100;
+  const fs=facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f)));
+  const facturado=fs.reduce((s,f)=>s+calcFactura(f).total,0);
+  const porCobrar=fs.reduce((s,f)=>s+Math.max(0,balanceFactura(f)),0);
+  const sinDetalle=fs.filter(f=>(Number(f.cobrado)||0)>0.005&&!(f.cobros||[]).length).length;
+
+  const filasM=Object.entries(porM).sort((a,b)=>b[1].monto-a[1].monto).map(([k,m])=>{
+    const lbl=(METODOS[k]||{}).label||k;
+    const alBanco=METODOS_AL_BANCO.includes(k);
+    return `<tr>
+      <td>${escHtml(lbl)}${alBanco?"":' <span class="tag tag-gold" style="font-size:9px">no pasa por el banco</span>'}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${m.n}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(m.monto)}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;color:${m.comision?"var(--red)":"var(--muted)"}">${m.comision?fmt(m.comision):"—"}</td>
+      <td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${fmt(m.neto)}</td>
+    </tr>`;}).join("");
+
+  const recientes=cobros.slice(0,14).map(c=>`<tr>
+    <td style="color:var(--muted);white-space:nowrap;font-size:11.5px">${escHtml(c.fecha)}</td>
+    <td style="font-family:ui-monospace,monospace;font-size:11px">${escHtml(c.factura||"")}</td>
+    <td style="max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(c.cliente)}</td>
+    <td><span class="tag" style="font-size:9px">${escHtml((METODOS[c.metodo]||{}).label||c.metodo||"—")}</span></td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(c.monto)}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)">${c.comision?fmt(c.comision):"—"}</td>
+  </tr>`).join("");
+
+  return `<div style="max-width:1000px">
+  <div style="font-size:15px;font-weight:600;margin-bottom:5px">Cobros · ${S.year}</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Dónde está el dinero de cada factura: qué se cobró, por qué vía, y cuánto llegó de verdad al banco</div>
+
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card kpi"><div class="kpi-label">Facturado</div><div class="kpi-val">${fmt(facturado)}</div><div class="kpi-sub">${fs.length} facturas</div></div>
+    <div class="card kpi"><div class="kpi-label">Cobrado</div><div class="kpi-val" style="color:#10b981">${fmt(total)}</div><div class="kpi-sub">${cobros.length} cobros registrados</div></div>
+    <div class="card kpi"><div class="kpi-label">Comisiones</div><div class="kpi-val" style="color:var(--red)">${fmt(comis)}</div><div class="kpi-sub">gasto deducible</div></div>
+    <div class="card kpi"><div class="kpi-label">Por cobrar</div><div class="kpi-val" style="color:${porCobrar>0.005?"var(--gold)":"var(--muted)"}">${fmt(porCobrar)}</div><div class="kpi-sub">balance de facturas</div></div>
+  </div>
+
+  ${sinDetalle?`<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.35)">
+    <div style="font-size:12px;color:#f59e0b;font-weight:600;margin-bottom:5px">⚠️ ${sinDetalle} facturas cobradas sin detalle de cobro</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.7">Están marcadas como pagadas pero no dicen <strong>por qué vía</strong> ni cuánta comisión se retuvo. Suele pasar con lo importado de Zoho, que trae el estado pero no el método. Mientras no lo completes, el desglose de abajo queda incompleto.</div>
+  </div>`:""}
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="section-title">Por vía de cobro</div>
+    ${cobros.length?`<div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Vía</th><th style="text-align:right">Cobros</th><th style="text-align:right">Monto</th><th style="text-align:right">Comisión</th><th style="text-align:right">Neto</th></tr></thead><tbody>${filasM}</tbody></table></div>`
+    :`<div style="font-size:12px;color:var(--muted);padding:10px 0">Todavía no hay cobros registrados con método. Ábrelos desde cada factura con «Registrar cobro».</div>`}
+  </div>
+
+  <div class="card" style="margin-bottom:16px;border-color:${Math.abs(brecha)>1?"rgba(245,158,11,.35)":"rgba(16,185,129,.3)"}">
+    <div class="section-title">El efectivo y el banco</div>
+    <table style="font-size:12.5px;width:100%;max-width:520px">
+      <tr><td style="color:var(--muted);padding:3px 0">Cobrado por vías que llegan al banco (neto)</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(esperadoBanco)}</td></tr>
+      <tr><td style="color:var(--muted);padding:3px 0">Entradas al banco contra Cuentas por Cobrar</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(realBanco)}</td></tr>
+      <tr><td style="font-weight:600;padding:6px 0;border-top:1px solid var(--border)">Diferencia</td><td style="text-align:right;font-weight:600;border-top:1px solid var(--border);color:${Math.abs(brecha)>1?"var(--gold)":"#10b981"}">${fmt(brecha)}</td></tr>
+      <tr><td style="color:var(--muted);padding:9px 0 3px">💵 Cobrado en <strong>efectivo</strong></td><td style="text-align:right;font-variant-numeric:tabular-nums;padding-top:9px">${fmt(efectivo)}</td></tr>
+    </table>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.75">
+      El efectivo <strong>no pasa por el banco</strong>, así que nunca aparecerá en un CSV bancario. Si lo depositas después, ese depósito no es un cobro nuevo — es mover dinero de tu caja al banco, y debe quedar marcado como <strong>transferencia</strong> para no contarlo dos veces.<br>
+      Si el efectivo se queda fuera, es un <strong>activo real</strong> que la contabilidad tiene que reflejar: crea una cuenta bancaria de tipo caja y asígnale esos cobros.
+    </div>
+    ${efectivo>0.005?`<div style="margin-top:10px"><button class="btn btn-ghost btn-sm" onclick="showModal('add-account')">+ Crear cuenta de Caja (efectivo)</button></div>`:""}
+  </div>
+
+  ${cobros.length?`<div class="card"><div class="section-title">Últimos cobros</div><div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Vía</th><th style="text-align:right">Monto</th><th style="text-align:right">Comisión</th></tr></thead><tbody>${recientes}</tbody></table></div></div>`:""}
+  </div>`;
+}
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
 function taxQuarters(){
   return QUARTERS.map(q=>{
@@ -3164,7 +3292,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.19"; //@build
+const BUILD="2026-09-16.20"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -3370,7 +3498,7 @@ function renderIvu(){
 
 function renderContent(){
   const el=document.getElementById("content");
-  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,txns:renderTxns,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
+  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,txns:renderTxns,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
   const banner=(S.tab==="settings")?"":taxAlertBanner();
   el.innerHTML=banner+(map[S.tab]||renderDashboard)();
 }
