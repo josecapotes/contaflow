@@ -486,7 +486,7 @@ async function switchCompany(id){
   await dbSetRaw("activeCompany",id);
   // estado limpio: nada de la empresa anterior puede quedarse colgado
   S.txns=[];S.allTxns={};S.budget={};S.balanceEntries=[];S.aiMessages=[];
-  S.projects=[];S.years=[2025];S.filterSearch="";S.filterCode="";S.filterSign="";
+  S.projects=[];S.years=[new Date().getFullYear()];S.filterSearch="";S.filterCode="";S.filterSign="";
   S.coa=DEFAULT_COA.map(x=>({...x}));
   S.bankAccounts=(id===LEGACY_CO)?DEFAULT_BANKS.map(x=>({...x})):[];
   syncCompanyIntoSettings();
@@ -662,6 +662,7 @@ async function loadState(){
     const ai=await dbGet("aiMessages");if(ai)S.aiMessages=ai;
     const ad=await dbGet("alertDismissed");if(ad)S.alertDismissed=ad;
     const pj=await dbGet("projects");S.projects=(pj&&pj.length)?pj:(S.companyId===LEGACY_CO?PROJECTS.map(p=>({...p})):[]);
+    if(!S.years.includes(S.year))S.year=S.years[S.years.length-1]||new Date().getFullYear();
     for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
     await loadYearTxns(S.year);
   }catch(e){console.warn(e)}
@@ -815,6 +816,8 @@ function toggleSidebar(){const sb=document.getElementById("sidebar");sb.classLis
 function updateSidebar(){
   buildYearSelect();buildNav();
   document.getElementById("sidebar-company").textContent=S.settings.companyName?.split(",")[0]||"";
+  const sub=document.getElementById("topbar-sub");
+  if(sub)sub.textContent=[S.settings.state,S.settings.entity].filter(Boolean).join(" · ")||"—";
   const net=S.txns.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
   const el=document.getElementById("sidebar-net");
   el.textContent=fmt(net);el.style.color=net>=0?"#10b981":"#ef4444";
