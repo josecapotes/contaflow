@@ -335,6 +335,8 @@ const MERCURY_CAT_MAP={
 const RULES_PR=[
   {re:/advance\s*servicin|advanceservicin/i,code:"2350"},
   {re:/island\s*finance/i,code:"2350"},
+  {re:/finance charge|cargo.*financiamiento|intereses?\b/i,code:"5250"},
+  {re:/nav tech|scribd|zoom\b|dropbox/i,code:"5200"},
   {re:/zoho|hotmart|openai|chatgpt|canva|shopify|godaddy|microsoft|adobe/i,code:"5200"},
   {re:/alibaba|aliexpress|baifujia|temu|dhgate/i,code:"5010"},
   {re:/\bdhl\b|fedex|\bups\b|aduana|customs/i,code:"5020"},
@@ -343,6 +345,10 @@ const RULES_PR=[
   {re:/hacienda|ivu sut|\bsuri\b|crim\b/i,code:"2100"},
   {re:/cargo por servicio|cargos? vencidos|comm svc fee|cargo ivu|service charge/i,code:"5240"},
   {re:/gas station|autoexpreso|\bshell\b|\bpuma\b|econo gas|garage/i,code:"5220"},
+  {re:/municipio|patente|crim\b/i,code:"5190"},
+  {re:/mapfre|triple.?s|seguro|insurance/i,code:"5180"},
+  {re:/eglobal|e-?global/i,code:"5010"},
+  {re:/paypal/i,code:"5010"},
   {re:/lanco|home depot|ferreteria|national lumber/i,code:"5230"},
 ];
 const INCOME_PR=[
@@ -352,7 +358,7 @@ const INCOME_PR=[
   {re:/ath movil|ath deposit|deposito|dep[oó]sito|cheque/i,code:"4010"},
   {re:/cashback|interes|interest/i,code:"4100"},
 ];
-const XFER_PR=[/telepago\s+transferencia/i,/telepago\s+visa\s+banco\s+popular/i,/transferencia\s+a\s+cuenta/i,/transferencia\s+de\s+fondos/i];
+const XFER_PR=[/su\s+telepago/i,/pago\s+recibido/i,/payment\s*-?\s*thank\s*you/i,/telepago\s+transferencia/i,/telepago\s+visa\s+banco\s+popular/i,/transferencia\s+a\s+cuenta/i,/transferencia\s+de\s+fondos/i];
 const REVERSO_RE=/devuelto|devoluci[oó]n|reclamaci[oó]n|recovery|reversal|revers[oa]/i;
 function perfilPR(){return(S.settings.taxProfile||"fl-llc")==="pr-ivu"}
 function esTransferencia(desc){
@@ -1437,7 +1443,7 @@ function renderSettings(){
     <button class="btn btn-ghost btn-sm" onclick="checkForUpdate(false)">Comprobar si hay versión nueva</button>
   </div>
   <div class="card"><div class="section-title">📅 Años Fiscales</div><div style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><input id="new-year" type="number" placeholder="2026" style="width:120px" min="2020" max="2099"><button class="btn btn-primary btn-sm" onclick="addYear()">+ Agregar</button></div><div style="display:flex;gap:8px;flex-wrap:wrap">${S.years.map(y=>`<div style="display:flex;align-items:center;gap:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:6px 12px"><span style="font-family:var(--serif);font-size:15px;color:#3b82f6;font-weight:600">${y}</span><button onclick="removeYear(${y})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px">🗑</button></div>`).join("")}</div></div>
-  <div class="card" style="border-color:rgba(16,185,129,.3)"><div class="section-title">💾 Exportar / Importar</div><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#6ee7b7;line-height:1.7">⚠️ Exporta antes de actualizar en Netlify. El backup incluye TODOS los años.</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="exportAllData()">⬇️ Exportar JSON (todos los años)</button><button class="btn btn-ghost btn-sm" onclick="exportTxns()">⬇️ CSV ${S.year}</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-json')">⬆️ Importar JSON</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-csv')">⬆️ Importar CSV bancario</button></div></div>
+  <div class="card" style="border-color:rgba(16,185,129,.3)"><div class="section-title">💾 Exportar / Importar</div><div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#6ee7b7;line-height:1.7">⚠️ Exporta antes de actualizar en Netlify. El backup incluye TODOS los años.</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="exportAllData()">⬇️ Exportar JSON (todos los años)</button><button class="btn btn-ghost btn-sm" onclick="exportTxns()">⬇️ CSV ${S.year}</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-json')">⬆️ Importar JSON</button><button class="btn btn-ghost btn-sm" onclick="showModal('import-csv')">⬆️ Importar CSV bancario</button><button class="btn btn-ghost btn-sm" onclick="showModal('recat');setTimeout(showRecat,30)">🔁 Recategorizar ${S.year}</button></div></div>
 <div class="card" style="margin-bottom:14px"><div class="section-title">☁️ Sesión y Sincronización</div>${USER?`<div style="font-size:12px;margin-bottom:4px">Conectado como <strong>${escHtml(USER.email||"")}</strong></div><div style="font-size:11px;color:#10b981;margin-bottom:12px">✅ Sincronizando con la nube — tus datos están en todos tus dispositivos</div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="showModal('migrate')">☁️ Subir datos locales a la nube</button><button class="btn btn-ghost btn-sm" onclick="authLogout()">🚪 Cerrar sesión</button></div>`:`<div style="font-size:12px;color:#f59e0b;margin-bottom:6px">${OFFLINE?"📴 Modo local (sin conexión)":"⚠️ Sin configurar Supabase"}</div><div style="font-size:11px;color:var(--muted);line-height:1.6">Los datos se guardan solo en este navegador y <strong>no</strong> se sincronizan con el móvil. ${OFFLINE?'<a href="#" onclick="location.reload();return false" style="color:#3b82f6">Reconectar</a>':""}</div>`}</div>
   <div class="card" style="border-color:rgba(239,68,68,.3)"><div class="section-title" style="color:#ef4444">⚠️ Zona de Peligro</div><button class="btn btn-danger btn-sm" onclick="clearYearData()">🗑 Borrar datos de ${S.year}</button></div></div>`;
 }
@@ -1489,6 +1495,10 @@ function showModal(type){
   if(type==="add-coa")html=`<div class="modal"><div class="modal-title">Nueva Cuenta Contable</div><div class="input-row"><div><label>Código *</label><input id="c-code" style="width:90px" placeholder="5210"></div><div style="flex:1"><label>Nombre *</label><input id="c-name" style="width:100%"></div></div><div class="input-row"><div><label>Tipo</label><select id="c-type"><option value="expense">expense</option><option value="revenue">revenue</option><option value="asset">asset</option><option value="liability">liability</option><option value="equity">equity</option></select></div><div><label>Grupo</label><input id="c-group" style="width:120px" value="misc"></div></div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="addCoaEntry()">Agregar</button></div></div>`;
   if(type==="migrate")html=`<div class="modal"><div class="modal-title">☁️ Subir tus datos a la nube</div><p style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:12px">Detecté datos guardados en <strong>este navegador</strong> que aún no están en la nube. Súbelos ahora y quedarán disponibles en todos tus dispositivos (incluido el móvil).</p><div style="font-size:11px;color:var(--muted);background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:6px;padding:10px;line-height:1.6">💡 Hazlo desde la computadora donde tienes tu historial completo. Si lo haces desde un equipo vacío, no se sube nada (no se borra nada tampoco).</div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Ahora no</button><button class="btn btn-primary" onclick="runMigration()">☁️ Subir a la nube</button></div></div>`;
   if(type==="import-json")html=`<div class="modal"><div class="modal-title">Importar JSON</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Pega el JSON exportado desde ContaFlow (v1 o v2) o un array de transacciones.</p><textarea id="import-text" rows="10" style="width:100%;resize:vertical;font-family:monospace;font-size:11px" placeholder='[{"id":"...","date":"2025-01-01","amount":100}]'></textarea><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="importJSON()">Importar</button></div></div>`;
+  if(type==="recat")html=`<div class="modal" style="max-width:600px"><div class="modal-title">Recategorizar con las reglas actuales</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Vuelve a pasar las reglas de <strong>${escHtml(activeCompany().name)}</strong> sobre las transacciones de ${S.year}. Útil cuando importaste antes de ajustar las reglas. Las entradas manuales nunca se tocan.</p>
+  <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer"><input type="checkbox" id="recat-todas" onchange="showRecat()"> También las que ya tienen una cuenta asignada <span style="opacity:.6">(pisa tus correcciones)</span></label>
+  <div id="recat-preview"></div>
+  <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button></div></div>`;
   if(type==="import-csv")html=`<div class="modal" style="max-width:720px"><div class="modal-title">Importar CSV bancario</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Sirve para <strong>cualquier banco</strong> (Mercury, Banco Popular, etc.). Selecciona el archivo o pega su contenido: detecto las columnas solo, pero puedes corregirlas y ver una vista previa antes de importar.</p>
   <input type="file" id="csv-file" accept=".csv,text/csv" style="margin-bottom:10px;font-size:12px" onchange="loadCsvFile(this)">
   <textarea id="csv-text" rows="5" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Date,Description,Amount" oninput="CSVIMP.t=null"></textarea>
@@ -1615,6 +1625,45 @@ async function importCSV(){
   toast(`✅ ${fresh.length} importadas${revs?` · ${revs} reversos emparejados`:""}${dupes?` · ${dupes} duplicadas omitidas`:""}${skippedYear?` · ${skippedYear} de otros años omitidas`:""}`);
 }
 
+
+// ═══ RECATEGORIZAR CON LAS REGLAS ACTUALES ═══
+function planRecat(soloSinCat){
+  const GEN=["4090","5900",""];
+  const cambios=[];
+  const copia=S.txns.map(t=>({...t}));
+  copia.forEach(t=>{
+    if(t.isManual)return;
+    if(soloSinCat&&!GEN.includes(t.coaCode||""))return;
+    const esX=esTransferencia(t.description);
+    const nuevoKind=esX?"transfer":(t.kind==="transfer"&&!esX?"":t.kind);
+    const nuevoCode=esX?"":autoCategory({description:t.description,counterparty:t.counterparty,amount:t.amount});
+    if(nuevoCode!==(t.coaCode||"")||nuevoKind!==(t.kind||"")){
+      cambios.push({id:t.id,de:t.coaCode||"(sin)",a:esX?"(transferencia)":nuevoCode,desc:t.description,monto:t.amount});
+      t.coaCode=nuevoCode;t.kind=nuevoKind;
+    }
+  });
+  const revs=emparejarReversos(copia);
+  return{copia,cambios,revs};
+}
+function showRecat(){
+  const solo=!document.getElementById("recat-todas")||!document.getElementById("recat-todas").checked;
+  const{cambios,revs}=planRecat(solo);
+  const agg={};cambios.forEach(c=>{agg[c.a]=(agg[c.a]||0)+1});
+  const nombre=c=>c==="(transferencia)"?"🔄 Transferencia":(S.coa.find(x=>x.code===c)?.name||c||"(sin cuenta)");
+  const box=document.getElementById("recat-preview");if(!box)return;
+  box.innerHTML=`<div style="font-size:12px;margin:10px 0"><strong>${cambios.length}</strong> transacciones cambiarían${revs?` · ${revs} reversos se emparejarían`:""}</div>
+  ${cambios.length?`<div style="overflow-x:auto;max-height:230px;overflow-y:auto"><table style="font-size:11px"><thead><tr><th>Destino</th><th style="text-align:right">Movs</th></tr></thead><tbody>${Object.entries(agg).sort((a,b)=>b[1]-a[1]).map(([k,n])=>`<tr><td>${escHtml(nombre(k))}</td><td style="text-align:right;font-weight:600">${n}</td></tr>`).join("")}</tbody></table></div>
+  <div style="font-size:10px;color:var(--muted);margin-top:8px">Ejemplos: ${cambios.slice(0,3).map(c=>escHtml((c.desc||"").slice(0,26))+" → "+escHtml(nombre(c.a))).join(" · ")}</div>`:`<div style="font-size:11px;color:var(--muted)">Nada que cambiar — ya está todo categorizado con las reglas actuales.</div>`}
+  <div style="margin-top:12px"><button class="btn btn-primary" onclick="aplicarRecat()" ${cambios.length?"":"disabled"}>✅ Aplicar a ${cambios.length}</button></div>`;
+}
+async function aplicarRecat(){
+  const solo=!document.getElementById("recat-todas")||!document.getElementById("recat-todas").checked;
+  const{copia,cambios,revs}=planRecat(solo);
+  if(!cambios.length)return toast("Nada que cambiar");
+  S.txns=copia;await saveTxns();
+  closeModal();updateSidebar();renderContent();
+  toast(`✅ ${cambios.length} recategorizadas${revs?` · ${revs} reversos emparejados`:""}`);
+}
 
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
 function taxQuarters(){
@@ -2042,7 +2091,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.9"; //@build
+const BUILD="2026-09-16.11"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
