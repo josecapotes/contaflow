@@ -1593,6 +1593,12 @@ function showModal(type){
   <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer"><input type="checkbox" id="recat-todas" onchange="showRecat()"> También las que ya tienen una cuenta asignada <span style="opacity:.6">(pisa tus correcciones)</span></label>
   <div id="recat-preview"></div>
   <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button></div></div>`;
+  if(type==="import-pagos")html=`<div class="modal" style="max-width:760px"><div class="modal-title">Importar pagos recibidos de Zoho Books</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">En Zoho: <strong>Ventas › Pagos recibidos › Exportar</strong> en CSV. Trae la vía de cobro, la comisión retenida y <strong>dónde cayó el dinero</strong> — que es lo que responde qué pasó con el efectivo.</p>
+  <input type="file" id="p-file" accept=".csv,text/csv" style="margin-bottom:10px;font-size:12px" onchange="(function(inp){const f=inp.files&&inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{document.getElementById('p-text').value=e.target.result;analizarPagos()};r.readAsText(f)})(this)">
+  <textarea id="p-text" rows="4" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Payment Number,CustomerPayment ID,Mode,..." oninput="PIMP=null"></textarea>
+  <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="analizarPagos()">🔍 Analizar</button> <span style="font-size:10.5px;color:var(--muted)">Importa primero las facturas; los pagos se aplican sobre ellas.</span></div>
+  <div id="p-preview"></div>
+  <div class="modal-footer"><button class="btn btn-ghost" onclick="PIMP=null;closeModal()">Cerrar</button></div></div>`;
   if(type==="import-zoho")html=`<div class="modal" style="max-width:760px"><div class="modal-title">Importar facturas de Zoho Books</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">En Zoho Books: <strong>Ventas › Facturas › Exportar</strong> en CSV. Zoho manda una fila por línea de factura; aquí se reagrupan. El «IVU COMPUESTO» del 11.5% se <strong>separa en estatal 10.5% y municipal 1%</strong>, que es lo que Zoho no desglosa.</p>
   <input type="file" id="z-file" accept=".csv,text/csv" style="margin-bottom:10px;font-size:12px" onchange="(function(inp){const f=inp.files&&inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{document.getElementById('z-text').value=e.target.result;analizarZoho()};r.readAsText(f)})(this)">
   <textarea id="z-text" rows="4" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Invoice Date,Invoice ID,Invoice Number,..." oninput="ZIMP=null"></textarea>
@@ -2253,6 +2259,7 @@ function exportInvoicesCsv(){
 const METODOS={
   stripe:{label:"Stripe",comision:0.029,fija:0.30,nota:"2.9% + $0.30 típico"},
   ath:{label:"ATH Móvil Business",comision:0.0195,fija:0,nota:"~1.95%"},
+  paypal:{label:"PayPal",comision:0.0349,fija:0.49,nota:"~3.49% + $0.49"},
   tarjeta:{label:"Tarjeta (otro procesador)",comision:0.029,fija:0.30,nota:"ajusta según tu contrato"},
   efectivo:{label:"Efectivo",comision:0,fija:0,nota:"sin comisión"},
   cheque:{label:"Cheque",comision:0,fija:0,nota:"sin comisión"},
@@ -2764,7 +2771,7 @@ function utilidadBruta(mes){return ingresoTotal(mes)-costoVentas(mes)}
 function margenBruto(mes){const i=ingresoTotal(mes);return i>0?(utilidadBruta(mes)/i*100):0}
 
 // ═══ COBROS: dónde está el dinero de cada factura ═══
-const METODOS_AL_BANCO=["stripe","ath","tarjeta","transferencia","cheque","cheque_bancario"];
+const METODOS_AL_BANCO=["stripe","paypal","ath","tarjeta","transferencia","cheque","cheque_bancario"];
 function todosLosCobros(){
   const out=[];
   facturasDelAnio().forEach(f=>{
@@ -2826,8 +2833,11 @@ function renderCobros(){
   </tr>`).join("");
 
   return `<div style="max-width:1000px">
-  <div style="font-size:15px;font-weight:600;margin-bottom:5px">Cobros · ${S.year}</div>
-  <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Dónde está el dinero de cada factura: qué se cobró, por qué vía, y cuánto llegó de verdad al banco</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+    <div><div style="font-size:15px;font-weight:600">Cobros · ${S.year}</div>
+    <div style="font-size:11px;color:var(--muted)">Dónde está el dinero de cada factura: qué se cobró, por qué vía, y cuánto llegó de verdad al banco</div></div>
+    <button class="btn btn-primary btn-sm" onclick="showModal('import-pagos')">⬆️ Pagos de Zoho</button>
+  </div>
 
   <div class="grid" style="margin-bottom:16px">
     <div class="card kpi"><div class="kpi-label">Facturado</div><div class="kpi-val">${fmt(facturado)}</div><div class="kpi-sub">${fs.length} facturas</div></div>
@@ -2864,6 +2874,162 @@ function renderCobros(){
 
   ${cobros.length?`<div class="card"><div class="section-title">Últimos cobros</div><div style="overflow-x:auto"><table style="font-size:12.5px"><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Vía</th><th style="text-align:right">Monto</th><th style="text-align:right">Comisión</th></tr></thead><tbody>${recientes}</tbody></table></div></div>`:""}
   </div>`;
+}
+// ══ IMPORTAR PAGOS RECIBIDOS DE ZOHO BOOKS ══
+// Un pago puede aplicarse a varias facturas; una factura puede recibir varios pagos.
+// Zoho dice además DÓNDE cayó el dinero (Stripe Clearing, el banco, o caja).
+let PIMP=null;
+const MODO_ZOHO={
+  "stripe":"stripe","paypal":"paypal","efectivo":"efectivo","cash":"efectivo",
+  "cheque":"cheque","check":"cheque","transferencia bancaria":"transferencia","bank transfer":"transferencia",
+  "ath mobile business":"ath","ath movil":"ath","ath móvil":"ath","tarjeta de credito":"tarjeta","credit card":"tarjeta",
+};
+function modoDeZoho(s){
+  const k=csvNorm(s);
+  if(MODO_ZOHO[k])return MODO_ZOHO[k];
+  for(const [a,b] of Object.entries(MODO_ZOHO))if(k.includes(a))return b;
+  return "transferencia";
+}
+function parseZohoPagos(text){
+  const recs=parseCSVRecords(text);
+  if(recs.length<2)return null;
+  const hdr=recs[0].map(h=>String(h).trim());
+  const C={num:zohoCol(hdr,["Payment Number"]),fecha:zohoCol(hdr,["Date"]),modo:zohoCol(hdr,["Mode"]),
+    monto:zohoCol(hdr,["Amount"]),sinAplicar:zohoCol(hdr,["Unused Amount"]),
+    cargo:zohoCol(hdr,["Bank Charges"]),cli:zohoCol(hdr,["Customer Name"]),
+    deposito:zohoCol(hdr,["Deposit To"]),ref:zohoCol(hdr,["Reference Number"]),
+    fact:zohoCol(hdr,["Invoice Number"]),fFact:zohoCol(hdr,["Invoice Date"]),
+    aplicado:zohoCol(hdr,["Importe aplicado a la factura de venta","Amount Applied to Invoice"])};
+  if(C.num<0||C.monto<0||C.fact<0)return null;
+  const V=(c,k)=>C[k]>=0?(c[C[k]]||""):"";
+  const mapa=new Map();
+  recs.slice(1).forEach(c=>{
+    if(c.length<5)return;
+    const num=V(c,"num").trim();
+    if(!num)return;
+    let p=mapa.get(num);
+    if(!p){
+      p={numero:num,fecha:V(c,"fecha").slice(0,10),metodo:modoDeZoho(V(c,"modo")),modoZoho:V(c,"modo").trim(),
+        monto:parseAmount(V(c,"monto")),sinAplicar:parseAmount(V(c,"sinAplicar")),
+        comision:parseAmount(V(c,"cargo")),cliente:V(c,"cli").replace(/\s+/g," ").trim(),
+        deposito:V(c,"deposito").trim(),ref:V(c,"ref").trim(),aplicaciones:[]};
+      mapa.set(num,p);
+    }
+    const f=V(c,"fact").trim();
+    if(f)p.aplicaciones.push({factura:f,fechaFactura:V(c,"fFact").slice(0,10),importe:parseAmount(V(c,"aplicado"))});
+  });
+  return [...mapa.values()];
+}
+function analizarPagos(){
+  const txt=(document.getElementById("p-text")||{}).value||"";
+  const arr=parseZohoPagos(txt.trim());
+  const box=document.getElementById("p-preview");
+  if(!arr||!arr.length){
+    if(box)box.innerHTML=`<div style="font-size:11px;color:#f59e0b;padding:10px">❌ No reconocí el archivo. Debe ser el CSV de <strong>Pagos recibidos</strong> de Zoho Books, con las columnas <code>Payment Number</code>, <code>Mode</code>, <code>Amount</code> e <code>Invoice Number</code>.</div>`;
+    return;
+  }
+  PIMP={arr};
+  renderPagosPreview();
+}
+function clasificarPagos(){
+  const porNum=new Map((S.invoices||[]).map(f=>[String(f.numero),f]));
+  const delAnio=PIMP.arr.filter(p=>String(p.fecha).startsWith(String(S.year)));
+  const res={aplicables:[],sinFactura:[],aniosAnteriores:[],futuras:[],anticipos:[]};
+  delAnio.forEach(p=>{
+    const apl=[],falt=[];
+    p.aplicaciones.forEach(a=>{
+      const f=porNum.get(a.factura);
+      if(f)apl.push({...a,facturaId:f.id});
+      else falt.push(a);
+    });
+    if(apl.length)res.aplicables.push({...p,apl});
+    falt.forEach(a=>{
+      const y=String(a.fechaFactura||"").slice(0,4);
+      const reg={pago:p,ap:a};
+      if(y&&y<String(S.year))res.aniosAnteriores.push(reg);
+      else if(y&&y>String(S.year))res.futuras.push(reg);
+      else res.sinFactura.push(reg);
+    });
+    if((Number(p.sinAplicar)||0)>0.005)res.anticipos.push(p);
+  });
+  res.otrosAnios=PIMP.arr.length-delAnio.length;
+  return res;
+}
+function renderPagosPreview(){
+  const box=document.getElementById("p-preview");if(!box||!PIMP)return;
+  const r=clasificarPagos();
+  const porM={};
+  r.aplicables.forEach(p=>{const k=p.metodo;const m=porM[k]||(porM[k]={n:0,monto:0,com:0});m.n++;m.monto+=p.monto;m.com+=p.comision});
+  const totCom=r.aplicables.reduce((s,p)=>s+p.comision,0);
+  const totMonto=r.aplicables.reduce((s,p)=>s+p.monto,0);
+  const efect=r.aplicables.filter(p=>p.metodo==="efectivo");
+  const enCaja=efect.filter(p=>/cash|caja|efectivo/i.test(p.deposito));
+  const depositado=efect.filter(p=>!/cash|caja|efectivo/i.test(p.deposito));
+  const fila=(k,m)=>`<tr><td>${escHtml((METODOS[k]||{}).label||k)}</td><td style="text-align:right">${m.n}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(m.monto)}</td><td style="text-align:right;font-variant-numeric:tabular-nums;color:${m.com?"var(--red)":"var(--muted)"}">${m.com?fmt(m.com):"—"}</td></tr>`;
+  box.innerHTML=`
+  <div class="card card-sm" style="margin-top:12px">
+    <div class="section-title">Lo que voy a importar</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;margin-bottom:10px">
+      <div>💵 <strong>${r.aplicables.length}</strong> pagos por ${fmt(totMonto)}</div>
+      <div>🧾 <strong>${r.aplicables.reduce((s,p)=>s+p.apl.length,0)}</strong> aplicaciones a facturas</div>
+      <div>✂️ <strong>${fmt(totCom)}</strong> en comisiones</div>
+      ${r.otrosAnios?`<div style="color:var(--muted)">${r.otrosAnios} de otros años</div>`:""}
+    </div>
+    <table style="font-size:12px"><thead><tr><th>Vía</th><th style="text-align:right">Pagos</th><th style="text-align:right">Monto</th><th style="text-align:right">Comisión</th></tr></thead>
+    <tbody>${Object.entries(porM).sort((a,b)=>b[1].monto-a[1].monto).map(([k,m])=>fila(k,m)).join("")}</tbody></table>
+  </div>
+  ${efect.length?`<div class="card card-sm" style="margin-top:10px;border-color:rgba(16,185,129,.3)">
+    <div class="section-title">El efectivo, respondido</div>
+    <table style="font-size:12px;width:100%;max-width:460px">
+      <tr><td style="color:var(--muted);padding:3px 0">Cobrado en efectivo</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(efect.reduce((s,p)=>s+p.monto,0))}</td></tr>
+      <tr><td style="color:var(--muted);padding:3px 0">— depositado en el banco</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(depositado.reduce((s,p)=>s+p.monto,0))}</td></tr>
+      <tr><td style="color:var(--muted);padding:3px 0">— quedó en caja</td><td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gold)">${fmt(enCaja.reduce((s,p)=>s+p.monto,0))}</td></tr>
+    </table>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.6">Zoho dice dónde cayó cada pago. Lo depositado aparecerá en el banco; lo que quedó en caja es un activo que solo vive aquí.</div>
+  </div>`:""}
+  ${r.aniosAnteriores.length?`<div class="card card-sm" style="margin-top:10px;border-color:rgba(245,158,11,.35)">
+    <div style="font-size:12px;font-weight:600;color:#f59e0b;margin-bottom:5px">⚠️ ${r.aniosAnteriores.length} cobros de facturas de años anteriores · ${fmt(r.aniosAnteriores.reduce((s,x)=>s+x.ap.importe,0))}</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7">Entraron en ${S.year} pero la venta —y su IVU— fue de otro año. <strong>No se importan</strong>: sumarlos aquí inflaría los ingresos de ${S.year}.</div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:7px">${r.aniosAnteriores.slice(0,6).map(x=>`${escHtml(x.ap.factura)} (${escHtml(x.ap.fechaFactura)}) ${fmt(x.ap.importe)}`).join(" · ")}</div>
+  </div>`:""}
+  ${r.futuras.length?`<div class="card card-sm" style="margin-top:10px;border-color:rgba(239,68,68,.35)">
+    <div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:5px">⚠️ ${r.futuras.length} cobro(s) aplicados a facturas con fecha futura</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7">${r.futuras.map(x=>`${escHtml(x.ap.factura)} fechada ${escHtml(x.ap.fechaFactura)}, cobrada ${escHtml(x.pago.fecha)}`).join(" · ")}. Revísalo en Zoho: o la fecha de la factura está mal, o el pago se aplicó a la factura equivocada.</div>
+  </div>`:""}
+  ${r.anticipos.length?`<div class="card card-sm" style="margin-top:10px;border-color:rgba(245,158,11,.35)">
+    <div style="font-size:12px;font-weight:600;color:#f59e0b;margin-bottom:5px">⚠️ ${r.anticipos.length} pago(s) con saldo sin aplicar · ${fmt(r.anticipos.reduce((s,p)=>s+p.sinAplicar,0))}</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7">${r.anticipos.map(p=>`${escHtml(p.cliente)} pagó ${fmt(p.monto)} y quedan ${fmt(p.sinAplicar)} sin aplicar`).join(" · ")}. Eso es un <strong>anticipo de cliente</strong>: dinero que tienes pero que todavía no es ingreso. Va como pasivo hasta que se emita la factura.</div>
+  </div>`:""}
+  <div style="margin-top:11px"><button class="btn btn-primary" onclick="importarPagos()" ${r.aplicables.length?"":"disabled"}>✅ Importar ${r.aplicables.length} pagos</button>
+  <span style="font-size:10.5px;color:var(--muted);margin-left:9px">Reemplaza los cobros genéricos que trajo la importación de facturas</span></div>`;
+}
+async function importarPagos(){
+  if(!PIMP)return toast("⚠️ Primero pega el CSV y analiza");
+  const r=clasificarPagos();
+  if(!r.aplicables.length)return toast("⚠️ Nada que importar");
+  // limpia los cobros genéricos creados al importar las facturas
+  const mapa={};
+  r.aplicables.forEach(p=>{
+    p.apl.forEach(a=>{
+      (mapa[a.facturaId]=mapa[a.facturaId]||[]).push({
+        fecha:p.fecha,monto:a.importe,metodo:p.metodo,
+        // la comisión se reparte a prorrata entre las facturas del mismo pago
+        comision:Math.round((p.comision*(p.monto?a.importe/p.monto:1))*100)/100,
+        neto:0,deposito:p.deposito,ref:p.ref,pagoZoho:p.numero});
+    });
+  });
+  let nF=0,nC=0;
+  S.invoices=(S.invoices||[]).map(f=>{
+    const cb=mapa[f.id];
+    if(!cb)return f;
+    cb.forEach(c=>{c.neto=Math.round((c.monto-c.comision)*100)/100;nC++});
+    nF++;
+    const cobrado=Math.round(cb.reduce((s,c)=>s+c.monto,0)*100)/100;
+    return {...f,cobros:cb,cobrado,origenCobros:"zoho-pagos"};
+  });
+  await saveInvoices();
+  PIMP=null;closeModal();updateSidebar();renderContent();
+  toast(`✅ ${nC} cobros importados en ${nF} facturas`);
 }
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
 function taxQuarters(){
@@ -3292,7 +3458,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.20"; //@build
+const BUILD="2026-09-16.21"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
