@@ -198,7 +198,7 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
       </div>
       <span id="sync-msg"></span><span id="sync-err"></span>
       <button class="btn btn-purple btn-sm" onclick="runMonthlyAnalysis()">🤖 Analizar</button>
-      <button class="btn btn-primary" id="sync-btn" onclick="handleSync()">🔄 Sincronizar</button>
+      <button class="btn btn-primary" id="sync-btn" style="display:none" onclick="handleSync()">🔄 Sincronizar</button>
     </div>
     <div id="content"></div>
   </div>
@@ -467,6 +467,12 @@ async function loadCompanies(){
   S.companyId=(act&&S.companies.some(c=>c.id===act))?act:S.companies[0].id;
 }
 
+function aplicarVisibilidadSync(){
+  const b=document.getElementById("sync-btn");
+  if(!b)return;
+  const modo=activeCompany().bankSync||(S.companyId===LEGACY_CO?"mercury":"none");
+  b.style.display=(modo==="mercury")?"":"none";
+}
 function buildCompanySelect(){
   const sel=document.getElementById("company-select");
   if(!sel)return;
@@ -492,7 +498,7 @@ async function switchCompany(id){
   syncCompanyIntoSettings();
   await loadState();
   syncCompanyIntoSettings();   // loadState puede traer settings guardados; la empresa manda
-  buildYearSelect();buildCompanySelect();buildNav();updateSidebar();renderContent();
+  buildYearSelect();buildCompanySelect();buildNav();updateSidebar();renderContent();aplicarVisibilidadSync();
   toast(`${c.icon||"🏢"} ${c.name}`);
 }
 
@@ -763,6 +769,10 @@ async function syncMercury(year,acctMap){
 }
 
 async function handleSync(){
+  if((activeCompany().bankSync||(S.companyId===LEGACY_CO?"mercury":"none"))!=="mercury"){
+    setErr(`⚠️ ${activeCompany().name} no está conectada a Mercury. Usa Importar CSV en Configuración.`);
+    return;
+  }
   if(!sb||!USER){setErr("⚠️ Inicia sesión para sincronizar con Mercury");return;}
   const btn=document.getElementById("sync-btn");btn.disabled=true;setMsg("Conectando con Mercury…");
   try{
@@ -1862,7 +1872,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.6"; //@build
+const BUILD="2026-09-16.7"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -2056,6 +2066,7 @@ async function bootApp(){
   await loadState();
   syncCompanyIntoSettings();
   buildNav();buildYearSelect();buildCompanySelect();updateSidebar();renderContent();
+  aplicarVisibilidadSync();
   iniciarVigilanciaVersion();
 }
 (async()=>{
