@@ -340,7 +340,8 @@ const RULES_PR=[
   {re:/zoho|hotmart|openai|chatgpt|canva|shopify|godaddy|microsoft|adobe/i,code:"5200"},
   {re:/alibaba|aliexpress|baifujia|temu|dhgate/i,code:"5010"},
   {re:/\bdhl\b|fedex|\bups\b|aduana|customs/i,code:"5020"},
-  {re:/t-?mobile|liberty|claro\b|\baee\b|\baaa\b|autoridad de energia|onelink/i,code:"5120"},
+  {re:/t-?mobile|liberty|claro\b|onelink|at&t|verizon|internet/i,code:"5125"},
+  {re:/\baee\b|\baaa\b|autoridad de energia|autoridad de acueductos|luma/i,code:"5120"},
   {re:/facebook|\bmeta\b|instagram|google ads|tiktok ads/i,code:"5140"},
   {re:/hacienda|ivu sut|\bsuri\b|crim\b/i,code:"2100"},
   {re:/cargo por servicio|cargos? vencidos|comm svc fee|cargo ivu|service charge/i,code:"5240"},
@@ -420,6 +421,7 @@ const TABS=[
   {id:"products",icon:"📦",label:"Productos",s:"ventas",fact:1},
   {id:"cobros",icon:"💵",label:"Cobros",s:"ventas",fact:1},
   {id:"txns",icon:"💳",label:"Transacciones",s:"datos"},
+  {id:"naturaleza",icon:"🧮",label:"Naturaleza del gasto",s:"reportes"},
   {id:"cuadre",icon:"⚖️",label:"Cuadre utilidad/caja",s:"datos"},
   {id:"reconcile",icon:"🔗",label:"Conciliación",s:"datos"},
   {id:"transfers",icon:"🔄",label:"Transferencias",s:"datos"},
@@ -1391,7 +1393,7 @@ function computeAccountBalance(accountId,asOfDate){
 }
 
 function renderCoa(){
-  return`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div style="font-size:15px;font-weight:600">Plan de Cuentas</div><button class="btn btn-primary btn-sm" onclick="showModal('add-coa')">+ Nueva</button></div><div class="card card-sm"><table><thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Grupo</th>${(S.settings.taxProfile||"")==="pr-ivu"?"<th>IVU</th>":""}<th></th></tr></thead><tbody>${S.coa.map(c=>`<tr style="${c.group==="header"?"background:var(--row)":""}"><td style="font-weight:${c.group==="header"?600:400}">${c.code}</td><td style="padding-left:${c.group==="header"?10:22}px">${escHtml(c.name)}</td><td>${c.group!=="header"?`<span class="tag" style="background:${TYPE_COLOR[c.type]||'#6b7280'}20;color:${TYPE_COLOR[c.type]||'#6b7280'};border:1px solid ${TYPE_COLOR[c.type]||'#6b7280'}40;font-size:10px">${c.type}</span>`:""}</td><td style="color:var(--muted);font-size:11px">${c.group}</td>${(S.settings.taxProfile||"")==="pr-ivu"?`<td>${c.type==="revenue"&&c.group!=="header"?`<select onchange="setCoaIvu('${c.code}',this.value)" style="font-size:10px;padding:2px 4px">${["11.5","4","exento","revisar","sin_clasificar"].map(k=>`<option value="${k}" ${ivuDe(c.code)===k?"selected":""}>${IVU_ETIQUETA[k]}</option>`).join("")}</select>`:""}</td>`:""}<td>${c.group!=="header"?`<button onclick="removeCoa('${c.code}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`:""}</td></tr>`).join("")}</tbody></table></div>`;
+  return`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div style="font-size:15px;font-weight:600">Plan de Cuentas</div><button class="btn btn-primary btn-sm" onclick="showModal('add-coa')">+ Nueva</button></div><div class="card card-sm"><table><thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Grupo</th><th>Naturaleza</th>${(S.settings.taxProfile||"")==="pr-ivu"?"<th>IVU</th>":""}<th></th></tr></thead><tbody>${S.coa.map(c=>`<tr style="${c.group==="header"?"background:var(--row)":""}"><td style="font-weight:${c.group==="header"?600:400}">${c.code}</td><td style="padding-left:${c.group==="header"?10:22}px">${escHtml(c.name)}</td><td>${c.group!=="header"?`<span class="tag" style="background:${TYPE_COLOR[c.type]||'#6b7280'}20;color:${TYPE_COLOR[c.type]||'#6b7280'};border:1px solid ${TYPE_COLOR[c.type]||'#6b7280'}40;font-size:10px">${c.type}</span>`:""}</td><td style="color:var(--muted);font-size:11px">${c.group}</td><td>${c.type==="expense"&&c.group!=="header"?`<select onchange="setCatGasto('${c.code}',this.value)" style="font-size:10px;padding:2px 4px">${Object.entries(CAT_GASTO).map(([k,v])=>`<option value="${k}" ${catDeCuenta(c.code)===k?"selected":""}>${v.label}</option>`).join("")}</select>`:""}</td>${(S.settings.taxProfile||"")==="pr-ivu"?`<td>${c.type==="revenue"&&c.group!=="header"?`<select onchange="setCoaIvu('${c.code}',this.value)" style="font-size:10px;padding:2px 4px">${["11.5","4","exento","revisar","sin_clasificar"].map(k=>`<option value="${k}" ${ivuDe(c.code)===k?"selected":""}>${IVU_ETIQUETA[k]}</option>`).join("")}</select>`:""}</td>`:""}<td>${c.group!=="header"?`<button onclick="removeCoa('${c.code}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`:""}</td></tr>`).join("")}</tbody></table></div>`;
 }
 async function setCoaIvu(code,val){
   S.coa=S.coa.map(c=>c.code===code?{...c,ivu:val}:c);
@@ -2677,6 +2679,7 @@ const CTAS_SUGERIDAS={
   "2350":{name:"Adelanto Comercial (MCA) por Pagar",type:"liability",group:"loan"},
   "3200":{name:"Retiros del Dueño",type:"equity",group:"equity"},
   "5250":{name:"Intereses y Costo de Financiamiento",type:"expense",group:"op"},
+  "5125":{name:"Teléfono e Internet",type:"expense",group:"op"},
 };
 async function crearCuentasFaltantes(){
   const f=cuentasInexistentes();
@@ -3161,6 +3164,107 @@ function renderCuadre(){
   </div>
   </div>`;
 }
+// ═══ NATURALEZA DEL GASTO ═══
+// No todos los gastos se comportan igual. Los fijos se pagan aunque no vendas
+// —y son los que determinan cuánto tienes que vender para no perder dinero—.
+// Los variables solo existen si hay venta.
+const CAT_GASTO={
+  cogs:      {label:"Costo de Ventas",  desc:"lo que te costó la mercancía que vendiste", color:"#f97316"},
+  fijo:      {label:"Gasto Fijo",       desc:"se paga vendas o no vendas: renta, luz, teléfono, nómina, seguros", color:"#ef4444"},
+  variable:  {label:"Gasto Variable",   desc:"solo existe si hay venta: envíos, publicidad, comisiones de pasarela", color:"#eab308"},
+  financiero:{label:"Gasto Financiero", desc:"intereses y cargos por financiar el negocio", color:"#a855f7"},
+};
+// Clasificación por defecto según el código, para no obligarte a configurar nada
+const CAT_DEFAULT={
+  "5110":"fijo","5120":"fijo","5125":"fijo","5160":"fijo","5170":"fijo","5180":"fijo",
+  "5190":"fijo","5200":"fijo","5230":"fijo",
+  "5130":"variable","5140":"variable","5150":"variable","5210":"variable","5220":"variable","5900":"variable",
+  "5240":"financiero","5250":"financiero",
+};
+function catDeCuenta(code){
+  const c=S.coa.find(x=>x.code===code);
+  if(!c||c.type!=="expense")return "";
+  if(c.cat&&CAT_GASTO[c.cat])return c.cat;
+  if(esCogs(code))return "cogs";
+  return CAT_DEFAULT[code]||"variable";
+}
+async function setCatGasto(code,cat){
+  S.coa=S.coa.map(c=>c.code===code?{...c,cat}:c);
+  await saveCoa();renderContent();
+  toast(`${code} → ${CAT_GASTO[cat].label}`);
+}
+function gastoPorNaturaleza(mes){
+  const g=gastoPorCuenta(mes);
+  const out={cogs:0,fijo:0,variable:0,financiero:0};
+  Object.entries(g).forEach(([c,v])=>{const k=catDeCuenta(c)||"variable";out[k]=(out[k]||0)+v});
+  return out;
+}
+// Punto de equilibrio: cuánto hay que vender para cubrir los fijos
+function puntoEquilibrio(){
+  const ing=ingresoTotal();
+  const n=gastoPorNaturaleza();
+  const margenContrib=ing>0?(ing-n.cogs-n.variable)/ing:0;   // % que queda de cada peso vendido
+  const fijos=n.fijo+n.financiero;
+  const meses=mesesConActividad();
+  return {
+    ingresos:ing, cogs:n.cogs, variable:n.variable, fijos,
+    margenContrib, ventasNecesarias: margenContrib>0?fijos/margenContrib:0,
+    meses, fijosMensuales:meses?fijos/meses:0,
+    ventasNecesariasMes: (margenContrib>0&&meses)?(fijos/margenContrib)/meses:0,
+    holgura: ing-(margenContrib>0?fijos/margenContrib:0),
+  };
+}
+function mesesConActividad(){
+  let n=0;
+  for(let m=0;m<12;m++)if(ingresoTotal(m)>0.005||gastoTotal(m)>0.005)n++;
+  return n||1;
+}
+function renderNaturalezaGasto(){
+  const n=gastoPorNaturaleza();
+  const pe=puntoEquilibrio();
+  const g=gastoPorCuenta();
+  const total=Object.values(n).reduce((a,b)=>a+b,0);
+  const bloques=Object.entries(CAT_GASTO).map(([k,meta])=>{
+    const ctas=Object.entries(g).filter(([c])=>(catDeCuenta(c)||"variable")===k).sort((a,b)=>b[1]-a[1]);
+    if(!ctas.length)return "";
+    const sub=ctas.reduce((s,[,v])=>s+v,0);
+    return `<div class="card" style="margin-bottom:12px;border-left:3px solid ${meta.color}">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+        <div style="font-size:13.5px;font-weight:600">${meta.label}</div>
+        <div style="font-family:var(--serif);font-size:18px;font-weight:600;color:${meta.color};font-variant-numeric:tabular-nums">${fmt(sub)}</div>
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:9px">${meta.desc} · ${total>0?(sub/total*100).toFixed(1):0}% del total</div>
+      <table style="font-size:12px"><tbody>${ctas.map(([c,v])=>{const ct=S.coa.find(x=>x.code===c);
+        return `<tr><td>${escHtml(ct?ct.code+" · "+ct.name:c)}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(v)}</td></tr>`}).join("")}</tbody></table>
+    </div>`;}).join("");
+  const ok=pe.holgura>=0;
+  return `<div style="max-width:900px">
+  <div style="font-size:15px;font-weight:600;margin-bottom:5px">Naturaleza del gasto · ${S.year}</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Qué gastos pagas aunque no vendas, y cuánto tienes que vender para cubrirlos</div>
+
+  <div class="card" style="margin-bottom:16px;border-color:${ok?"rgba(16,185,129,.3)":"rgba(239,68,68,.4)"}">
+    <div class="section-title">Punto de equilibrio</div>
+    <table style="font-size:13px;width:100%;max-width:560px">
+      <tr><td style="color:var(--muted);padding:3px 0">De cada dólar vendido, después de costo y gastos variables, te queda</td><td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${(pe.margenContrib*100).toFixed(1)}%</td></tr>
+      <tr><td style="color:var(--muted);padding:3px 0">Gastos fijos y financieros del año</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(pe.fijos)}</td></tr>
+      <tr><td style="color:var(--muted);padding:3px 0">— por mes (${pe.meses} meses con actividad)</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(pe.fijosMensuales)}</td></tr>
+      <tr><td style="font-weight:600;padding:8px 0;border-top:1px solid var(--border)">Tienes que vender al año</td><td style="text-align:right;font-weight:600;border-top:1px solid var(--border);padding:8px 0;font-variant-numeric:tabular-nums">${fmt(pe.ventasNecesarias)}</td></tr>
+      <tr><td style="font-weight:600;padding:3px 0">— al mes</td><td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${fmt(pe.ventasNecesariasMes)}</td></tr>
+      <tr><td style="color:var(--muted);padding:8px 0;border-top:1px solid var(--border)">Vendiste</td><td style="text-align:right;border-top:1px solid var(--border);padding:8px 0;font-variant-numeric:tabular-nums">${fmt(pe.ingresos)}</td></tr>
+      <tr><td style="font-weight:600;padding:3px 0;color:${ok?"#10b981":"var(--red)"}">${ok?"Margen de seguridad":"Te faltó vender"}</td><td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums;color:${ok?"#10b981":"var(--red)"}">${fmt(Math.abs(pe.holgura))}</td></tr>
+    </table>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.7">${ok
+      ?`Puedes vender <strong>${pe.ingresos>0?(pe.holgura/pe.ingresos*100).toFixed(0):0}% menos</strong> antes de entrar en pérdidas. Cada dólar por encima del punto de equilibrio deja ${(pe.margenContrib*100).toFixed(0)}¢ de utilidad.`
+      :`Con este nivel de gasto fijo, las ventas de ${S.year} no alcanzan a cubrirlo.`}</div>
+  </div>
+
+  ${bloques}
+
+  <div class="card" style="margin-top:4px">
+    <div style="font-size:10.5px;color:var(--muted);line-height:1.7">La naturaleza de cada cuenta se ajusta en <strong>Plan de Cuentas</strong>. Cambiarla no mueve ni un centavo: solo cambia en qué bloque se lee y cómo se calcula el punto de equilibrio.</div>
+  </div>
+  </div>`;
+}
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
 function taxQuarters(){
   return QUARTERS.map(q=>{
@@ -3588,7 +3692,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.23"; //@build
+const BUILD="2026-09-16.24"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -3794,7 +3898,7 @@ function renderIvu(){
 
 function renderContent(){
   const el=document.getElementById("content");
-  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,txns:renderTxns,cuadre:renderCuadre,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
+  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,naturaleza:renderNaturalezaGasto,txns:renderTxns,cuadre:renderCuadre,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
   const banner=(S.tab==="settings")?"":taxAlertBanner();
   el.innerHTML=banner+(map[S.tab]||renderDashboard)();
 }
