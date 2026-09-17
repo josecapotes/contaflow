@@ -1026,7 +1026,8 @@ function renderBalance(){
   // Auto: balances calculados de cuentas bancarias
   const bankAssets=S.bankAccounts.filter(a=>a.type!=="credit").map(a=>({id:`auto_${a.id}`,name:a.name,amount:computeAccountBalance(a.id),note:`Saldo inicial ${S.year}: ${fmt(computeAccountOpening(a.id))} · Movimiento ${S.year}: ${fmt(computeYearMovement(a.id))}`,auto:true}));
   const bankLiabs=S.bankAccounts.filter(a=>a.type==="credit").map(a=>({id:`auto_${a.id}`,name:a.name,amount:computeAccountBalance(a.id),note:`Deuda inicial ${S.year}: ${fmt(computeAccountOpening(a.id))} · Movimiento ${S.year}: ${fmt(computeYearMovement(a.id))}`,auto:true})).filter(e=>Math.abs(e.amount)>0.005);
-  const allAssets=[...bankAssets,...assetE],allLiabs=[...bankLiabs,...liabE];
+  const auto=partidasAutoBalance();
+  const allAssets=[...bankAssets,...auto.activos,...assetE],allLiabs=[...bankLiabs,...auto.pasivos,...liabE];
   const tA=allAssets.reduce((s,e)=>s+e.amount,0),tL=allLiabs.reduce((s,e)=>s+e.amount,0);
   const netInc=S.txns.filter(t=>t.kind!=="transfer").reduce((s,t)=>s+t.amount,0);
   const eq=tA-tL;
@@ -1041,7 +1042,7 @@ function renderBalance(){
   <div class="card" style="flex:1;min-width:240px"><div class="section-title" style="color:#3b82f6">ACTIVOS</div><table><thead><tr><th>Descripción</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${allAssets.map(row).join("")}${!allAssets.length?`<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Sin activos</td></tr>`:""}</tbody></table><div style="border-top:1px solid var(--border);padding:10px;text-align:right;font-family:var(--serif);font-size:14px;font-weight:600;color:#3b82f6">Total: ${fmt(tA)}</div></div>
   <div class="card" style="flex:1;min-width:240px"><div class="section-title" style="color:#8b5cf6">PASIVOS Y PATRIMONIO</div><table><thead><tr><th>Descripción</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${allLiabs.map(row).join("")}${!allLiabs.length?`<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">Sin pasivos</td></tr>`:""}</tbody></table>
   <div style="border-top:2px solid var(--border);padding:10px"><div style="display:flex;justify-content:space-between;font-family:var(--serif);font-size:14px;font-weight:600"><span>Total Pasivos:</span><span style="color:#8b5cf6">${fmt(tL)}</span></div><div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px;color:var(--muted)"><span>Patrimonio:</span><span>${fmt(eq)}</span></div><div style="display:flex;justify-content:space-between;font-size:15px;font-weight:600;margin-top:8px;border-top:1px solid var(--border);padding-top:8px"><span>Total:</span><span style="color:#10b981">${fmt(tL+eq)}</span></div></div></div></div>
-  <div style="margin-top:12px;font-size:11px;color:var(--muted)">💡 Las cuentas Mercury se calculan automáticamente desde tus transacciones. Agrega manualmente otros activos (propiedades, equipos) y pasivos (préstamos externos).</div></div>`;
+  <div style="margin-top:12px;font-size:11px;color:var(--muted)">💡 Los saldos bancarios, las Cuentas por Cobrar, el IVU por remitir, el efectivo en caja y los saldos de préstamo se calculan solos desde tus facturas y tu libro. Agrega manualmente otros activos (propiedades, equipos) y pasivos (préstamos externos).</div></div>`;
 }
 async function removeBalanceEntry(id){S.balanceEntries=S.balanceEntries.filter(e=>e.id!==id);await saveBalanceEntries();renderContent();}
 
@@ -3265,6 +3266,155 @@ function renderNaturalezaGasto(){
   </div>
   </div>`;
 }
+// ═══ PARTIDAS DEL BALANCE QUE SE CALCULAN SOLAS ═══
+// En base de factura hay cifras que ya no hay que teclear: lo que te deben,
+// lo que le debes a Hacienda, y el efectivo cobrado que no ha llegado al banco.
+function cuentasPorCobrarAuto(){
+  return Math.round(facturasDelAnio()
+    .filter(f=>!["borrador","anulada"].includes(estadoFactura(f)))
+    .reduce((s,f)=>s+Math.max(0,balanceFactura(f)),0)*100)/100;
+}
+function ivuPorRemitirAuto(){
+  const d=ivuDevengado(), r=ivuRemitido();
+  const pend=Math.round((d.total-r)*100)/100;
+  return {estatal:d.estatal,municipal:d.municipal,especial:d.especial,devengado:d.total,remitido:r,pendiente:pend};
+}
+function efectivoEnCajaAuto(){
+  // Cobros en efectivo cuyo destino NO fue una cuenta bancaria
+  return Math.round(todosLosCobros()
+    .filter(c=>c.metodo==="efectivo"&&/cash|caja/i.test(c.deposito||""))
+    .reduce((s,c)=>s+(Number(c.monto)||0),0)*100)/100;
+}
+function saldoCuentaAuto(code){
+  // Saldo de una cuenta de pasivo o activo según los movimientos del libro
+  return Math.round(S.txns.filter(t=>t.kind!=="transfer"&&t.coaCode===code)
+    .reduce((s,t)=>s+t.amount,0)*100)/100;
+}
+function partidasAutoBalance(){
+  const out={activos:[],pasivos:[]};
+  if(modoFacturacion()!=="factura")return out;
+  const pc=cuentasPorCobrarAuto();
+  if(Math.abs(pc)>0.005)out.activos.push({id:"auto_ar",name:`${CTA_POR_COBRAR} Cuentas por Cobrar`,amount:pc,
+    note:`Balance pendiente de ${facturasDelAnio().filter(f=>balanceFactura(f)>0.005&&!["borrador","anulada"].includes(estadoFactura(f))).length} facturas emitidas`,auto:1});
+  const caja=efectivoEnCajaAuto();
+  if(Math.abs(caja)>0.005)out.activos.push({id:"auto_caja",name:"Efectivo en caja",amount:caja,
+    note:"Cobros en efectivo que no se depositaron en el banco",auto:1});
+  const iv=ivuPorRemitirAuto();
+  if(Math.abs(iv.pendiente)>0.005)out.pasivos.push({id:"auto_ivu",name:"IVU por Remitir a Hacienda",amount:iv.pendiente,
+    note:`Devengado ${fmt(iv.devengado)} − remitido ${fmt(iv.remitido)} · estatal ${fmt(iv.estatal)} + municipal ${fmt(iv.municipal)}`,auto:1});
+  // Cualquier cuenta de pasivo del plan de cuentas con movimiento en el libro
+  S.coa.filter(c=>c.type==="liability"&&c.group!=="header"&&!["2100","2110","2120"].includes(c.code)).forEach(c=>{
+    const s=saldoCuentaAuto(c.code);
+    if(Math.abs(s)>0.005)out.pasivos.push({id:"auto_"+c.code,name:`${c.code} ${c.name}`,amount:-s,
+      note:"Movimiento neto del libro en esta cuenta",auto:1});
+  });
+  return out;
+}
+// ═══ CONCILIACIÓN: el banco contra los cobros de factura ═══
+// En base de factura, un depósito no se empareja con una transacción del libro:
+// se empareja con el COBRO de una factura. Y el neto que llega al banco ya viene
+// con la comisión descontada, así que hay que compararlo contra el neto, no el bruto.
+function cobrosConciliables(){
+  return todosLosCobros()
+    .filter(c=>METODOS_AL_BANCO.includes(c.metodo||"transferencia"))
+    .map((c,i)=>({...c,idc:`${c.facturaId}|${i}`,neto:Math.round(((Number(c.monto)||0)-(Number(c.comision)||0))*100)/100}));
+}
+function conciliarCobros(){
+  const cobros=cobrosConciliables();
+  const depos=S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&t.coaCode===CTA_POR_COBRAR);
+  const usados=new Set();
+  const casados=[],sinBanco=[];
+  cobros.forEach(c=>{
+    // Un depósito puede traer varios cobros juntos (Stripe liquida en lotes),
+    // así que se prueba primero el calce exacto por neto y luego por bruto.
+    let mejor=null,mejorD=1e9;
+    depos.forEach(t=>{
+      if(usados.has(t.id))return;
+      const calza=Math.abs(t.amount-c.neto)<0.02||Math.abs(t.amount-c.monto)<0.02;
+      if(!calza)return;
+      const d=daysDiff(t.date,c.fecha);
+      if(d<=10&&d<mejorD){mejor=t;mejorD=d}
+    });
+    if(mejor){usados.add(mejor.id);casados.push({cobro:c,banco:mejor,dias:mejorD})}
+    else sinBanco.push(c);
+  });
+  // SEGUNDA PASADA: un depósito puede traer VARIOS cobros juntos.
+  // Stripe y PayPal liquidan en lotes, y los cheques y el efectivo se depositan
+  // de varios en uno. Se busca el grupo de cobros que suma el depósito.
+  const lotes=[];
+  const pend=new Set(sinBanco.map(c=>c.idc));
+  depos.filter(t=>!usados.has(t.id)).forEach(t=>{
+    const cand=sinBanco.filter(c=>pend.has(c.idc)&&c.fecha<=t.date&&daysDiff(t.date,c.fecha)<=8)
+      .sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)))
+      .slice(0,12);                       // techo: 2^12 combinaciones como máximo
+    if(cand.length<2)return;
+    let mejor=null;
+    for(let m=1;m<(1<<cand.length);m++){
+      let suma=0,n=0;
+      for(let i=0;i<cand.length;i++)if(m&(1<<i)){suma+=cand[i].neto;n++}
+      if(n<2)continue;
+      if(Math.abs(suma-t.amount)<0.02){
+        if(!mejor||n<mejor.n){mejor={m,n,suma}}
+        if(n===2)break;                   // el calce más simple gana
+      }
+    }
+    if(!mejor)return;
+    const grupo=[];
+    for(let i=0;i<cand.length;i++)if(mejor.m&(1<<i)){grupo.push(cand[i]);pend.delete(cand[i].idc)}
+    usados.add(t.id);
+    lotes.push({banco:t,grupo});
+  });
+  const sinBanco2=sinBanco.filter(c=>pend.has(c.idc));
+  const sinCobro=depos.filter(t=>!usados.has(t.id));
+  return {cobros,depos,casados,lotes,sinBanco:sinBanco2,sinCobro};
+}
+function renderConciliaCobros(){
+  const r=conciliarCobros();
+  const sum=a=>a.reduce((s,x)=>s+(x.neto!==undefined?x.neto:x.amount),0);
+  const totCasado=r.casados.reduce((s,x)=>s+x.banco.amount,0);
+  const filaSB=r.sinBanco.sort((a,b)=>b.neto-a.neto).slice(0,25).map(c=>`<tr>
+    <td style="color:var(--muted);white-space:nowrap;font-size:11.5px">${escHtml(c.fecha)}</td>
+    <td style="font-family:ui-monospace,monospace;font-size:11px">${escHtml(c.factura||"")}</td>
+    <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(c.cliente)}</td>
+    <td><span class="tag" style="font-size:9px">${escHtml((METODOS[c.metodo]||{}).label||c.metodo)}</span></td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(c.neto)}</td></tr>`).join("");
+  const filaSC=r.sinCobro.sort((a,b)=>b.amount-a.amount).slice(0,25).map(t=>`<tr>
+    <td style="color:var(--muted);white-space:nowrap;font-size:11.5px">${escHtml(t.date)}</td>
+    <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(t.amount)}</td></tr>`).join("");
+  return `<div style="max-width:960px">
+  <div style="font-size:15px;font-weight:600;margin-bottom:5px">Conciliación · cobros contra banco · ${S.year}</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Cada cobro de factura debe tener su depósito. Se compara contra el <strong>neto</strong>, porque el banco recibe el monto ya sin la comisión. Tolerancia de 2¢ y 10 días.</div>
+
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card kpi"><div class="kpi-label">Emparejados</div><div class="kpi-val" style="color:#10b981">${r.casados.length+r.lotes.reduce((s,l)=>s+l.grupo.length,0)}</div><div class="kpi-sub">${r.casados.length} uno a uno · ${r.lotes.reduce((s,l)=>s+l.grupo.length,0)} en ${r.lotes.length} lotes</div></div>
+    <div class="card kpi"><div class="kpi-label">Cobros sin depósito</div><div class="kpi-val" style="color:${r.sinBanco.length?"var(--gold)":"var(--muted)"}">${r.sinBanco.length}</div><div class="kpi-sub">${fmt(sum(r.sinBanco))}</div></div>
+    <div class="card kpi"><div class="kpi-label">Depósitos sin cobro</div><div class="kpi-val" style="color:${r.sinCobro.length?"var(--red)":"var(--muted)"}">${r.sinCobro.length}</div><div class="kpi-sub">${fmt(sum(r.sinCobro))}</div></div>
+    <div class="card kpi"><div class="kpi-label">Cobros por vías al banco</div><div class="kpi-val">${r.cobros.length}</div><div class="kpi-sub">de ${todosLosCobros().length} cobros</div></div>
+  </div>
+
+  ${r.lotes.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(16,185,129,.28)">
+    <div style="font-size:12.5px;font-weight:600;color:#10b981;margin-bottom:5px">${r.lotes.length} depósitos que traían varios cobros juntos</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:9px">Stripe y PayPal liquidan en lotes, y los cheques y el efectivo se depositan de varios en uno. Estos cuadran al centavo como grupo.</div>
+    <div style="overflow-x:auto;max-height:230px;overflow-y:auto"><table style="font-size:11.5px"><thead><tr><th>Depósito</th><th style="text-align:right">Monto</th><th>Cobros que lo componen</th></tr></thead><tbody>
+    ${r.lotes.map(l=>`<tr><td style="color:var(--muted);white-space:nowrap">${escHtml(l.banco.date)}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(l.banco.amount)}</td><td style="font-size:10.5px">${l.grupo.map(c=>escHtml(c.factura)+" "+fmt(c.neto)).join(" + ")}</td></tr>`).join("")}
+    </tbody></table></div>
+  </div>`:""}
+  ${r.sinCobro.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(239,68,68,.35)">
+    <div style="font-size:12.5px;font-weight:600;color:var(--red);margin-bottom:5px">Depósitos que no corresponden a ningún cobro · ${fmt(sum(r.sinCobro))}</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:9px">Entró dinero al banco contra Cuentas por Cobrar sin una factura detrás. Normalmente son <strong>transferencias entre tus cuentas sin marcar</strong>, préstamos recibidos, o cobros de facturas de otros años. Revísalos: mientras estén aquí, tus cuentas por cobrar están mal.</div>
+    <div style="overflow-x:auto;max-height:260px;overflow-y:auto"><table style="font-size:12px"><thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right">Monto</th></tr></thead><tbody>${filaSC}</tbody></table></div>
+    ${r.sinCobro.length>25?`<div style="font-size:10.5px;color:var(--muted);margin-top:7px">Mostrando los 25 mayores de ${r.sinCobro.length}.</div>`:""}
+  </div>`:`<div class="card" style="margin-bottom:14px;border-color:rgba(16,185,129,.3)"><div style="font-size:12px;color:#10b981">✓ Todo depósito contra Cuentas por Cobrar tiene su cobro de factura.</div></div>`}
+
+  ${r.sinBanco.length?`<div class="card">
+    <div style="font-size:12.5px;font-weight:600;color:var(--gold);margin-bottom:5px">Cobros que no aparecen en el banco · ${fmt(sum(r.sinBanco))}</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:9px">Zoho dice que se cobró por una vía que termina en el banco, pero no encuentro el depósito. Puede ser que el dinero cayera en una cuenta que no has cargado, o que el depósito venga agrupado con otros cobros en un solo lote.</div>
+    <div style="overflow-x:auto;max-height:260px;overflow-y:auto"><table style="font-size:12px"><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Vía</th><th style="text-align:right">Neto</th></tr></thead><tbody>${filaSB}</tbody></table></div>
+    ${r.sinBanco.length>25?`<div style="font-size:10.5px;color:var(--muted);margin-top:7px">Mostrando los 25 mayores de ${r.sinBanco.length}.</div>`:""}
+  </div>`:""}
+  </div>`;
+}
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
 function taxQuarters(){
   return QUARTERS.map(q=>{
@@ -3692,7 +3842,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-16.24"; //@build
+const BUILD="2026-09-17.1"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -3898,7 +4048,7 @@ function renderIvu(){
 
 function renderContent(){
   const el=document.getElementById("content");
-  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,naturaleza:renderNaturalezaGasto,txns:renderTxns,cuadre:renderCuadre,reconcile:renderReconcile,transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
+  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,naturaleza:renderNaturalezaGasto,txns:renderTxns,cuadre:renderCuadre,reconcile:()=>modoFacturacion()==="factura"?renderConciliaCobros():renderReconcile(),transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
   const banner=(S.tab==="settings")?"":taxAlertBanner();
   el.innerHTML=banner+(map[S.tab]||renderDashboard)();
 }
