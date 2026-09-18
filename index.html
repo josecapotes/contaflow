@@ -1239,6 +1239,76 @@ function exportBudget(){
   downloadFile(`Presupuesto_${yr}.csv`,csv,"text/csv");
 }
 
+
+// ═══ Dividir una transacción en varias cuentas ═══
+// Un solo cargo del banco puede ser dos cosas: la renta y su cargo por demora,
+// una compra con su flete. Aquí se parte sin tocar el importe total.
+function showSplit(id){
+  const t=S.txns.find(x=>x.id===id);if(!t)return;
+  const lc=S.coa.filter(c=>c.group!=="header");
+  const opt=(sel)=>lc.map(c=>`<option value="${c.code}" ${c.code===sel?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("");
+  const signo=t.amount<0?-1:1;
+  openModal(`<div class="modal" style="max-width:620px"><div class="modal-title">Dividir en varias cuentas</div>
+  <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:12px">
+    <strong>${escHtml(t.date)}</strong> · ${escHtml(t.description)} · <strong style="color:${t.amount<0?"var(--red)":"#10b981"}">${fmt(t.amount)}</strong><br>
+    Reparte ese importe entre las cuentas que correspondan. El total tiene que cuadrar al centavo: no se inventa ni se pierde dinero.
+  </div>
+  <div id="split-rows"></div>
+  <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="addSplitRow()">+ Otra línea</button></div>
+  <div id="split-cuadre" style="margin-top:10px"></div>
+  <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+  <button class="btn btn-primary" id="split-ok" onclick="aplicarSplit('${id}')">Dividir</button></div></div>`);
+  SPLIT={id,total:Math.abs(t.amount),signo,opt:opt,filas:[{monto:"",code:t.coaCode||"",nota:""},{monto:"",code:"",nota:""}]};
+  renderSplitRows();
+}
+let SPLIT=null;
+function addSplitRow(){if(!SPLIT)return;SPLIT.filas.push({monto:"",code:"",nota:""});renderSplitRows()}
+function quitarSplitRow(i){if(!SPLIT||SPLIT.filas.length<=2)return;SPLIT.filas.splice(i,1);renderSplitRows()}
+function setSplit(i,campo,v){if(!SPLIT)return;SPLIT.filas[i][campo]=v;renderSplitCuadre()}
+function renderSplitRows(){
+  const box=document.getElementById("split-rows");if(!box||!SPLIT)return;
+  box.innerHTML=SPLIT.filas.map((f,i)=>`<div class="input-row" style="margin-bottom:6px;align-items:flex-end">
+    <div><label>Importe</label><input type="number" step="0.01" value="${f.monto}" style="width:110px;text-align:right" oninput="setSplit(${i},'monto',this.value)"></div>
+    <div style="flex:1;min-width:170px"><label>Cuenta</label><select style="width:100%" onchange="setSplit(${i},'code',this.value)"><option value="">— elegir —</option>${SPLIT.opt(f.code)}</select></div>
+    <div style="flex:1;min-width:110px"><label>Nota</label><input value="${escHtml(f.nota)}" style="width:100%" oninput="setSplit(${i},'nota',this.value)"></div>
+    ${SPLIT.filas.length>2?`<button class="btn btn-ghost btn-sm" onclick="quitarSplitRow(${i})">✕</button>`:""}
+  </div>`).join("");
+  renderSplitCuadre();
+}
+function renderSplitCuadre(){
+  const c=document.getElementById("split-cuadre");if(!c||!SPLIT)return;
+  const suma=SPLIT.filas.reduce((s,f)=>s+(Number(f.monto)||0),0);
+  const dif=Math.round((SPLIT.total-suma)*100)/100;
+  const ok=Math.abs(dif)<0.005&&SPLIT.filas.filter(f=>Number(f.monto)).every(f=>f.code);
+  const btn=document.getElementById("split-ok");if(btn)btn.disabled=!ok;
+  c.innerHTML=`<div style="font-size:12px;display:flex;gap:16px;flex-wrap:wrap">
+    <span>Repartido <strong style="font-variant-numeric:tabular-nums">${fmt(suma)}</strong></span>
+    <span>de <strong style="font-variant-numeric:tabular-nums">${fmt(SPLIT.total)}</strong></span>
+    <span style="color:${Math.abs(dif)<0.005?"#10b981":"var(--gold)"}">${Math.abs(dif)<0.005?"✓ cuadra":`falta ${fmt(dif)}`}</span>
+  </div>${!ok&&Math.abs(dif)<0.005?`<div style="font-size:11px;color:#f59e0b;margin-top:5px">Cada línea con importe necesita su cuenta.</div>`:""}`;
+}
+async function aplicarSplit(id){
+  if(!SPLIT)return;
+  const t=S.txns.find(x=>x.id===id);if(!t)return;
+  const filas=SPLIT.filas.filter(f=>Number(f.monto)>0&&f.code);
+  const suma=filas.reduce((s,f)=>s+Number(f.monto),0);
+  if(Math.abs(SPLIT.total-suma)>=0.005)return toast("⚠️ El reparto no cuadra con el importe original");
+  if(filas.length<2)return toast("⚠️ Hacen falta al menos dos líneas");
+  // La original se sustituye por sus partes. Se conserva todo lo demas de la transaccion.
+  const partes=filas.map((f,i)=>({...t,
+    id:`${t.id}__s${i}`,
+    amount:Math.round(SPLIT.signo*Number(f.monto)*100)/100,
+    coaCode:f.code,
+    note:[t.note,f.nota].filter(Boolean).join(" · "),
+    kind:"",                       // una parte con cuenta ya no es una transferencia
+    splitOf:t.id,
+    splitOrig:Math.round(t.amount*100)/100,
+    isManual:false}));
+  const idx=S.txns.findIndex(x=>x.id===id);
+  S.txns=[...S.txns.slice(0,idx),...partes,...S.txns.slice(idx+1)];
+  await saveTxns();SPLIT=null;closeModal();updateSidebar();renderContent();
+  toast(`✅ Dividida en ${partes.length} partes`);
+}
 function renderCashflow(){
   const txs=S.txns.filter(t=>t.kind!=="transfer"),now=new Date(),curM=S.year===now.getFullYear()?now.getMonth():11;
   const hist=Array.from({length:12},(_,m)=>{const inc=txs.filter(t=>t.amount>0&&getTxMonth(t)===m).reduce((s,t)=>s+t.amount,0);const exp=txs.filter(t=>t.amount<0&&getTxMonth(t)===m).reduce((s,t)=>s+Math.abs(t.amount),0);return{m,lbl:MONTHS[m],inc,exp,net:inc-exp,has:inc>0||exp>0};});
@@ -1286,7 +1356,7 @@ function renderTxns(){
   const lc=S.coa.filter(c=>c.group!=="header");
   const filtered=S.txns.filter(t=>{const q=S.filterSearch.toLowerCase();if(q&&!`${t.description} ${t.counterparty}`.toLowerCase().includes(q))return false;if(S.filterCode&&t.coaCode!==S.filterCode)return false;if(S.filterSign==="income"&&t.amount<=0)return false;if(S.filterSign==="expense"&&t.amount>=0)return false;return true;}).sort((a,b)=>b.date.localeCompare(a.date));
   return`<div class="card card-sm" style="margin-bottom:14px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input id="tx-search" style="width:200px" placeholder="🔍 Buscar..." value="${escHtml(S.filterSearch)}" oninput="S.filterSearch=this.value;renderContent()"><select style="max-width:220px" onchange="S.filterCode=this.value;renderContent()"><option value="">Todas las categorías</option>${lc.map(c=>`<option value="${c.code}" ${c.code===S.filterCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("")}</select><select onchange="S.filterSign=this.value;renderContent()"><option value="" ${!S.filterSign?"selected":""}>Todos</option><option value="income" ${S.filterSign==="income"?"selected":""}>Ingresos</option><option value="expense" ${S.filterSign==="expense"?"selected":""}>Gastos</option></select><div style="flex:1"></div><button class="btn btn-purple btn-sm" onclick="aiCategorizeTxns()">🤖 Categorizar IA</button><button class="btn btn-ghost btn-sm" onclick="autoAll()">⚡ Auto</button><button class="btn btn-primary btn-sm" onclick="showModal('add-tx')">+ Manual</button></div></div>
-  <div class="card card-sm"><div style="font-size:11px;color:var(--muted);margin-bottom:10px">${filtered.length} transacciones · <span id="ai-cat-status"></span></div><div style="overflow-x:auto"><table><thead><tr><th>Fecha</th><th>Descripción</th><th class="hide-mobile">Contraparte</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead><tbody>${filtered.map(t=>{const opts=lc.map(c=>`<option value="${c.code}" ${c.code===t.coaCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("");return`<tr><td style="color:var(--muted);white-space:nowrap;font-size:11px">${fmtDateFull(t.date)}</td><td style="max-width:200px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</div>${t.note?`<div style="font-size:10px;color:var(--muted)">${escHtml(t.note)}</div>`:""}${t.isManual?'<span class="tag tag-gold">Manual</span>':""}${t.aiCategorized?'<span class="tag tag-purple">IA</span>':""}${t.kind==="transfer"?'<span class="tag" style="background:#3b82f622;color:#3b82f6">🔄 Transferencia</span>':""}${t.reconciled?'<span class="tag" style="background:#10b98122;color:#10b981">✓ Conciliada</span>':""}</td><td class="hide-mobile" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${escHtml(t.counterparty)}</td><td><select style="font-size:11px;max-width:200px" onchange="updateTxCoa('${t.id}',this.value)"><option value="">Sin categoría</option>${opts}</select></td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600;white-space:nowrap">${fmt(t.amount)}</td><td>${t.isManual?`<button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">✕</button>`:""}</td></tr>`;}).join("")}${filtered.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Sin resultados</td></tr>`:""}</tbody></table></div></div>`;
+  <div class="card card-sm"><div style="font-size:11px;color:var(--muted);margin-bottom:10px">${filtered.length} transacciones · <span id="ai-cat-status"></span></div><div style="overflow-x:auto"><table><thead><tr><th>Fecha</th><th>Descripción</th><th class="hide-mobile">Contraparte</th><th>Categoría</th><th style="text-align:right">Monto</th><th></th></tr></thead><tbody>${filtered.map(t=>{const opts=lc.map(c=>`<option value="${c.code}" ${c.code===t.coaCode?"selected":""}>${c.code} – ${escHtml(c.name)}</option>`).join("");return`<tr><td style="color:var(--muted);white-space:nowrap;font-size:11px">${fmtDateFull(t.date)}</td><td style="max-width:200px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</div>${t.note?`<div style="font-size:10px;color:var(--muted)">${escHtml(t.note)}</div>`:""}${t.isManual?'<span class="tag tag-gold">Manual</span>':""}${t.aiCategorized?'<span class="tag tag-purple">IA</span>':""}${t.kind==="transfer"?'<span class="tag" style="background:#3b82f622;color:#3b82f6">🔄 Transferencia</span>':""}${t.reconciled?'<span class="tag" style="background:#10b98122;color:#10b981">✓ Conciliada</span>':""}${t.splitOf?'<span class="tag" style="background:#8b5cf622;color:#8b5cf6">⇋ Parte de división</span>':""}</td><td class="hide-mobile" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${escHtml(t.counterparty)}</td><td><select style="font-size:11px;max-width:200px" onchange="updateTxCoa('${t.id}',this.value)"><option value="">Sin categoría</option>${opts}</select></td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600;white-space:nowrap">${fmt(t.amount)}</td><td style="white-space:nowrap"><button onclick="showSplit('${t.id}')" title="Dividir en varias cuentas" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">⇋</button>${t.isManual?`<button onclick="deleteTx('${t.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">✕</button>`:""}</td></tr>`;}).join("")}${filtered.length===0?`<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Sin resultados</td></tr>`:""}</tbody></table></div></div>`;
 }
 async function updateTxCoa(id,code){S.txns=S.txns.map(t=>t.id===id?{...t,coaCode:code}:t);await saveTxns();updateSidebar();}
 async function autoAll(){S.txns=S.txns.map(t=>t.kind==="transfer"?t:{...t,coaCode:autoCategory(t)});await saveTxns();renderContent();toast("✅ Auto-categorización completa")}
@@ -4367,7 +4437,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-18.7"; //@build
+const BUILD="2026-09-18.8"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
