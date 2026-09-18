@@ -113,6 +113,7 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
 #menu-toggle{display:none;background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;padding:4px}
 .sidebar-close{display:none;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px;position:absolute;top:14px;right:14px}
 .pl-row td:first-child{padding-left:24px;color:var(--muted)}
+@media(max-width:640px){.pl-row td:first-child{padding-left:10px;font-size:11px;line-height:1.4}.pl-row td:last-child{white-space:nowrap;font-size:11.5px}}
 .pl-row td:last-child{text-align:right}
 .pl-section td{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:2px;text-transform:uppercase;background:var(--row);padding:7px 10px}
 .pl-total td{font-family:var(--serif);font-size:14px;font-weight:600;border-top:1px solid var(--border);padding:10px}
@@ -136,6 +137,9 @@ label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
   /* Tablas: scroll horizontal suave */
   .card{padding:14px;overflow-x:auto}
   table{min-width:480px;font-size:12px}
+  /* Las tablas de 2 columnas (P&L, balance, totales) caben en el teléfono */
+  table.fit,.pl-fit table{min-width:0;width:100%}
+  .pl-fit{overflow-x:visible}
   th,td{padding:8px 6px}
   /* Botones y toques más grandes */
   .btn{padding:9px 12px;font-size:12px}
@@ -359,7 +363,10 @@ const INCOME_PR=[
   {re:/ath movil|ath deposit|deposito|dep[oó]sito|cheque/i,code:"4010"},
   {re:/cashback|interes|interest/i,code:"4100",sinFactura:1},   // nunca lleva factura
 ];
-const XFER_PR=[/su\s+telepago/i,/pago\s+recibido/i,/payment\s*-?\s*thank\s*you/i,/telepago\s+transferencia/i,/telepago\s+visa\s+banco\s+popular/i,/transferencia\s+a\s+cuenta/i,/transferencia\s+de\s+fondos/i];
+// Transferencias REALES: entre cuentas de la propia empresa (su tarjeta Visa)
+const XFER_PR=[/su\s+telepago/i,/pago\s+recibido/i,/payment\s*-?\s*thank\s*you/i,/telepago\s+visa\s+banco\s+popular/i];
+// Movimientos con cuentas personales de la dueña: NO son transferencias internas
+const DUENA_RE=[/transferencia\s+a\s+cuenta\s+cheques/i,/transferencia\s+de\s+fondos/i,/\bbsmart\b/i];
 const REVERSO_RE=/devuelto|devoluci[oó]n|reclamaci[oó]n|recovery|reversal|revers[oa]/i;
 function perfilPR(){return(S.settings.taxProfile||"fl-llc")==="pr-ivu"}
 function esTransferencia(desc){
@@ -370,6 +377,8 @@ function esTransferencia(desc){
 function autoCategory(tx){
   const t=`${tx.description||''} ${tx.counterparty||''}`.toLowerCase();
   const pr=perfilPR();
+  // Dinero movido con las cuentas personales de la dueña, entre o salga
+  if(pr&&DUENA_RE.some(re=>re.test(t))&&S.coa.find(c=>c.code===CTA_DUENA))return CTA_DUENA;
   // En base de factura un ingreso del banco es un COBRO, nunca un ingreso nuevo:
   // el ingreso ya se reconoció al emitir la factura.
   if(tx.amount>0&&typeof modoFacturacion==="function"&&modoFacturacion()==="factura"){
@@ -422,6 +431,7 @@ const TABS=[
   {id:"cobros",icon:"💵",label:"Cobros",s:"ventas",fact:1},
   {id:"txns",icon:"💳",label:"Transacciones",s:"datos"},
   {id:"naturaleza",icon:"🧮",label:"Naturaleza del gasto",s:"reportes"},
+  {id:"duena",icon:"👤",label:"Cuenta de la dueña",s:"datos"},
   {id:"cuadre",icon:"⚖️",label:"Cuadre utilidad/caja",s:"datos"},
   {id:"reconcile",icon:"🔗",label:"Conciliación",s:"datos"},
   {id:"transfers",icon:"🔄",label:"Transferencias",s:"datos"},
@@ -961,7 +971,7 @@ function renderDashboard(){
     <div style="font-size:12.5px;font-weight:600;color:var(--red);margin-bottom:6px">⚠️ Esta utilidad está incompleta</div>
     <div style="font-size:11.5px;color:var(--muted);line-height:1.75">Salieron <strong>${fmt(Math.abs(_q.transf))}</strong> netos hacia cuentas que no están cargadas en la app. Los gastos pagados desde ahí no están en estos números, así que la utilidad es una <strong>cota máxima</strong>.</div>
     <div style="margin-top:9px"><button class="btn btn-ghost btn-sm" onclick="goTab('cuadre')">Ver el cuadre completo →</button></div></div>`:"";
-  return avisoDobleConteo()+avisoCuentasInexistentes()+_avisoCaja+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Bruta</div><div class="kpi-val" style="color:#10b981">${fmt(utilidadBruta())}</div><div class="kpi-sub">Margen bruto ${margenBruto().toFixed(1)}% · costo ${fmt(costoVentas())}</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
+  return avisoDobleConteo()+avisoCuentasInexistentes()+avisoCuentaDuena()+_avisoCaja+`<div class="grid"><div class="card kpi"><div class="kpi-label">Ingresos</div><div class="kpi-val" style="color:#10b981">${fmt(rev)}</div><div class="kpi-sub">${modoFacturacion()==="factura"?`${facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))).length} facturas`:`${txs.filter(t=>t.amount>0).length} transacciones`}</div></div><div class="card kpi"><div class="kpi-label">Gastos</div><div class="kpi-val" style="color:#ef4444">${fmt(exp)}</div><div class="kpi-sub">${txs.filter(t=>t.amount<0).length} transacciones</div></div><div class="card kpi"><div class="kpi-label">Utilidad Bruta</div><div class="kpi-val" style="color:#10b981">${fmt(utilidadBruta())}</div><div class="kpi-sub">Margen bruto ${margenBruto().toFixed(1)}% · costo ${fmt(costoVentas())}</div></div><div class="card kpi"><div class="kpi-label">Utilidad Neta</div><div class="kpi-val" style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</div><div class="kpi-sub">Margen ${margin}%</div></div><div class="card kpi"><div class="kpi-label">Transacciones</div><div class="kpi-val" style="color:#3b82f6">${txs.length}</div><div class="kpi-sub">Año ${S.year}</div></div></div>
   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:2;min-width:260px"><div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span>Ingresos vs Gastos · ${S.year}</span><div style="display:flex;gap:10px;font-size:10px;color:var(--muted)"><span><span style="display:inline-block;width:8px;height:8px;background:#10b981;border-radius:2px;margin-right:3px"></span>Ing</span><span><span style="display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:2px;margin-right:3px"></span>Gas</span></div></div><div class="chart-wrap">${svg}</div></div><div class="card" style="flex:1;min-width:180px"><div class="section-title">Por Trimestre</div><table style="font-size:11px"><thead><tr><th>Q</th><th style="text-align:right">Ing</th><th style="text-align:right">Gas</th><th style="text-align:right">Neto</th></tr></thead><tbody>${qRows}</tbody></table></div></div>
   ${(()=>{const sg=salidasNoGasto();const tot=Object.values(sg).reduce((a,b)=>a+b,0);if(tot<0.01)return "";
   return `<div class="card" style="margin-bottom:18px"><div class="section-title">Salidas que no son gasto · ${fmt(tot)}</div>
@@ -977,10 +987,10 @@ function renderPL(){
   const ing=ingresoPorCuenta(),gas=gastoPorCuenta();
   const sum=code=>(ing[code]||0)+(gas[code]||0);
   const tR=ingresoTotal(),tE=gastoTotal(),net=tR-tE;
-  const taxNote=net>0?`SE Tax est.: ${fmt(net*.9235*.153)} | Income Tax est.: ${fmt((net-net*.9235*.153/2)*.10)}`:"Sin obligación fiscal estimada";
+  const perfil=S.settings.taxProfile||"fl-llc";
   return avisoDobleConteo()+`<div style="max-width:680px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Estado de Resultados</div><div style="display:flex;gap:8px"><button class="btn btn-purple btn-sm" onclick="aiSummarizePL()">🤖 Resumen IA</button><button class="btn btn-ghost btn-sm" onclick="exportPL()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="printCpaPacket()">🖨 Paquete CPA</button></div></div>
-  <div class="card" style="margin-bottom:16px"><div style="text-align:center;margin-bottom:18px"><div style="font-family:var(--serif);font-size:20px;font-weight:600">${escHtml(S.settings.companyName)}</div><div style="font-size:12px;color:var(--muted)">Estado de Resultados · Año Fiscal ${S.year} · Base de Efectivo</div></div>
-  <table><tbody><tr class="pl-section"><td colspan="2">INGRESOS</td></tr>${(()=>{const fct=modoFacturacion()==="factura"?cuentasFacturadas():null;return revA.map(a=>{const v=sum(a.code);if(!(v>0))return "";const sf=fct&&!fct.has(a.code);return `<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}${sf?' <span class="tag tag-gold" style="font-size:9px">sin factura</span>':""}</td><td style="text-align:right;color:#10b981">${fmt(v)}</td></tr>`}).join("")})()}<tr class="pl-total" style="color:#10b981"><td>TOTAL INGRESOS</td><td style="text-align:right">${fmt(tR)}</td></tr>
+  <div class="card pl-fit" style="margin-bottom:16px"><div style="text-align:center;margin-bottom:18px"><div style="font-family:var(--serif);font-size:20px;font-weight:600">${escHtml(S.settings.companyName)}</div><div style="font-size:12px;color:var(--muted)">Estado de Resultados · Año Fiscal ${S.year} · ${modoFacturacion()==="factura"?"Base de Acumulación":"Base de Efectivo"}</div></div>
+  <table class="fit"><tbody><tr class="pl-section"><td colspan="2">INGRESOS</td></tr>${(()=>{const fct=modoFacturacion()==="factura"?cuentasFacturadas():null;return revA.map(a=>{const v=sum(a.code);if(!(v>0))return "";const sf=fct&&!fct.has(a.code);return `<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}${sf?' <span class="tag tag-gold" style="font-size:9px">sin factura</span>':""}</td><td style="text-align:right;color:#10b981">${fmt(v)}</td></tr>`}).join("")})()}<tr class="pl-total" style="color:#10b981"><td>TOTAL INGRESOS</td><td style="text-align:right">${fmt(tR)}</td></tr>
   ${(()=>{const cg=expA.filter(a=>esCogs(a.code)&&sum(a.code)>0);if(!cg.length)return "";
     const tc=costoVentas(),ub=utilidadBruta(),mb=margenBruto();
     return `<tr class="pl-section"><td colspan="2">COSTO DE VENTAS</td></tr>`+
@@ -992,7 +1002,18 @@ function renderPL(){
   <tr class="pl-section"><td colspan="2">GASTOS OPERATIVOS</td></tr>${expA.filter(a=>!esCogs(a.code)).map(a=>{const v=sum(a.code);return v>0?`<tr class="pl-row"><td>${a.code} · ${escHtml(a.name)}</td><td style="text-align:right;color:#ef4444">(${fmt(v,true)})</td></tr>`:""}).join("")}<tr class="pl-total" style="color:#ef4444"><td>TOTAL GASTOS</td><td style="text-align:right">(${fmt(tE,true)})</td></tr>
   <tr class="pl-net" style="color:${net>=0?'#10b981':'#ef4444'}"><td>UTILIDAD NETA</td><td style="text-align:right">${fmt(net)}</td></tr>${tR>0?`<tr><td style="padding:4px 10px 10px;font-size:11px;color:var(--muted)">Margen</td><td style="text-align:right;padding:4px 10px 10px;font-size:11px;color:${net>=0?'#10b981':'#ef4444'}">${((net/tR)*100).toFixed(1)}%</td></tr>`:""}</tbody></table></div>
   <div id="pl-ai-result"></div>
-  <div class="card" style="background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.25)"><div style="font-size:11px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠️ Nota Fiscal · Florida LLC Pass-Through</div><div style="font-size:11px;color:var(--muted);line-height:1.7">${taxNote}<br>Consulta tu CPA (Form 1040 + Schedule C · vence 15 Abr). Annual Report Sunbiz: 1 Mayo · $138.75.</div></div></div>`;
+  ${(()=>{
+    if(perfil==="fl-llc"){
+      const nota=net>0?`SE Tax est.: ${fmt(net*.9235*.153)} | Income Tax est.: ${fmt((net-net*.9235*.153/2)*.10)}`:"Sin obligación fiscal estimada";
+      return `<div class="card" style="background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.25)"><div style="font-size:11px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠️ Nota Fiscal · Florida LLC Pass-Through</div><div style="font-size:11px;color:var(--muted);line-height:1.7">${nota}<br>Consulta tu CPA (Form 1040 + Schedule C · vence 15 Abr). Annual Report Sunbiz: 1 Mayo · $138.75.</div></div>`;
+    }
+    if(perfil==="pr-ivu"){
+      const iv=(typeof ivuDevengado==="function"&&modoFacturacion()==="factura")?ivuDevengado():ivuMensual();
+      const pend=Math.round((iv.total-(typeof ivuRemitido==="function"?ivuRemitido():0))*100)/100;
+      return `<div class="card" style="background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.25)"><div style="font-size:11px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠️ Nota Fiscal · Puerto Rico</div><div style="font-size:11px;color:var(--muted);line-height:1.7">El IVU <strong>no es un gasto ni un ingreso</strong>: se cobra al cliente y se remite. En ${S.year} se devengaron ${fmt(iv.total)}${pend>0.005?` y quedan <strong>${fmt(pend)}</strong> por remitir`:""}.<br>Planilla Mensual SC 2915 vía SURI, hasta el día 20 del mes siguiente. La planilla de ingresos la determina tu CPA según la entidad.</div></div>`;
+    }
+    return `<div class="card" style="background:rgba(107,114,128,.07);border-color:rgba(107,114,128,.25)"><div style="font-size:11px;color:var(--muted);line-height:1.7">Esta empresa no tiene módulo de impuestos configurado. Se ajusta en Configuración → editar empresa.</div></div>`;
+  })()}</div>`;
 }
 async function aiSummarizePL(){
   const revA=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
@@ -2678,6 +2699,7 @@ const CTAS_SUGERIDAS={
   "2110":{name:"IVU Municipal 1% por Remitir",type:"liability",group:"ivu"},
   "2120":{name:"IVU Especial 4% B2B por Remitir",type:"liability",group:"ivu"},
   "2350":{name:"Adelanto Comercial (MCA) por Pagar",type:"liability",group:"loan"},
+  "1150":{name:"Cuenta Corriente – Dueña (anticipos por justificar)",type:"asset",group:"receivable"},
   "3200":{name:"Retiros del Dueño",type:"equity",group:"equity"},
   "5250":{name:"Intereses y Costo de Financiamiento",type:"expense",group:"op"},
   "5125":{name:"Teléfono e Internet",type:"expense",group:"op"},
@@ -3092,7 +3114,8 @@ function salidasPasivo(){
 function entradasPasivo(){
   // Préstamos recibidos: entran a caja pero no son ingreso
   return S.txns.filter(t=>t.kind!=="transfer"&&t.amount>0&&(()=>{
-    const c=S.coa.find(x=>x.code===t.coaCode);return c&&c.type!=="revenue"&&c.type!=="asset";
+    const c=S.coa.find(x=>x.code===t.coaCode);
+    return c&&c.type!=="revenue"&&c.code!==CTA_POR_COBRAR;   // cobros de factura sí son ingreso ya reconocido
   })()).reduce((s,t)=>s+t.amount,0);
 }
 function cobrosDelAnio(){
@@ -3302,6 +3325,11 @@ function partidasAutoBalance(){
   const iv=ivuPorRemitirAuto();
   if(Math.abs(iv.pendiente)>0.005)out.pasivos.push({id:"auto_ivu",name:"IVU por Remitir a Hacienda",amount:iv.pendiente,
     note:`Devengado ${fmt(iv.devengado)} − remitido ${fmt(iv.remitido)} · estatal ${fmt(iv.estatal)} + municipal ${fmt(iv.municipal)}`,auto:1});
+  S.coa.filter(c=>c.type==="asset"&&c.group!=="header"&&c.group!=="bank"&&c.code!==CTA_POR_COBRAR).forEach(c=>{
+    const s=saldoCuentaAuto(c.code);
+    if(Math.abs(s)>0.005)out.activos.push({id:"auto_"+c.code,name:`${c.code} ${c.name}`,amount:-s,
+      note:c.code===CTA_DUENA?"Anticipos a la dueña pendientes de justificar con comprobantes":"Movimiento neto del libro en esta cuenta",auto:1});
+  });
   // Cualquier cuenta de pasivo del plan de cuentas con movimiento en el libro
   S.coa.filter(c=>c.type==="liability"&&c.group!=="header"&&!["2100","2110","2120"].includes(c.code)).forEach(c=>{
     const s=saldoCuentaAuto(c.code);
@@ -3413,6 +3441,85 @@ function renderConciliaCobros(){
     <div style="overflow-x:auto;max-height:260px;overflow-y:auto"><table style="font-size:12px"><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Vía</th><th style="text-align:right">Neto</th></tr></thead><tbody>${filaSB}</tbody></table></div>
     ${r.sinBanco.length>25?`<div style="font-size:10.5px;color:var(--muted);margin-top:7px">Mostrando los 25 mayores de ${r.sinBanco.length}.</div>`:""}
   </div>`:""}
+  </div>`;
+}
+// ═══ CUENTA CORRIENTE CON LA DUEÑA ═══
+// El dinero que sale hacia una cuenta o tarjeta personal de la dueña NO es una
+// transferencia interna (no es una cuenta de la empresa) ni es un gasto todavía.
+// Es un anticipo: queda registrado como cuenta por cobrar a la dueña hasta que
+// aparezca el comprobante de qué se compró. Lo que se justifique pasa a gasto o
+// inventario; lo que no, es un retiro y va al patrimonio.
+const CTA_DUENA="1150";
+function saldoCuentaDuena(){
+  const mov=S.txns.filter(t=>t.kind!=="transfer"&&t.coaCode===CTA_DUENA);
+  const sal=mov.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
+  const ent=mov.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
+  return {salidas:Math.round(sal*100)/100, entradas:Math.round(ent*100)/100,
+          saldo:Math.round((sal-ent)*100)/100, n:mov.length,
+          nSalidas:mov.filter(t=>t.amount<0).length, nEntradas:mov.filter(t=>t.amount>0).length};
+}
+function avisoCuentaDuena(){
+  const d=saldoCuentaDuena();
+  if(d.saldo<=500)return "";
+  const nom=(S.coa.find(c=>c.code===CTA_DUENA)||{}).name||"la dueña";
+  return `<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.06)">
+    <div style="font-size:12.5px;font-weight:600;color:#f59e0b;margin-bottom:6px">⚠️ ${fmt(d.saldo)} pendientes de justificar en la cuenta de la dueña</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.75">
+      Salieron <strong>${fmt(d.salidas)}</strong> en ${d.nSalidas} movimientos hacia cuentas personales y volvieron <strong>${fmt(d.entradas)}</strong> en ${d.nEntradas}.
+      Ese saldo no es gasto ni es retiro <em>todavía</em>: depende de qué se compró.
+      <br><strong>Lo que tenga comprobante</strong> de compra para el negocio se reclasifica a inventario o gasto — y ahí sí baja la utilidad y es deducible.
+      <strong>Lo que no</strong>, es un retiro de la dueña y va al patrimonio, sin tocar el Estado de Resultados.
+    </div>
+    <div style="margin-top:9px"><button class="btn btn-ghost btn-sm" onclick="goTab('duena')">Ver el detalle →</button></div>
+  </div>`;
+}
+function renderCuentaDuena(){
+  const d=saldoCuentaDuena();
+  const cta=S.coa.find(c=>c.code===CTA_DUENA);
+  const mov=S.txns.filter(t=>t.kind!=="transfer"&&t.coaCode===CTA_DUENA)
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const porMes={};
+  mov.forEach(t=>{const k=String(t.date).slice(0,7);const m=porMes[k]||(porMes[k]={sal:0,ent:0,n:0});
+    m.n++; if(t.amount<0)m.sal+=Math.abs(t.amount); else m.ent+=t.amount;});
+  const filas=Object.entries(porMes).sort().map(([k,m])=>`<tr>
+    <td style="color:var(--muted)">${escHtml(k)}</td><td style="text-align:right">${m.n}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--red)">${m.sal?fmt(-m.sal):"—"}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums;color:#10b981">${m.ent?fmt(m.ent):"—"}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${fmt(m.sal-m.ent)}</td></tr>`).join("");
+  const detalle=mov.slice().reverse().slice(0,40).map(t=>`<tr>
+    <td style="color:var(--muted);white-space:nowrap;font-size:11.5px">${escHtml(t.date)}</td>
+    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums;color:${t.amount<0?"var(--red)":"#10b981"}">${fmt(t.amount)}</td></tr>`).join("");
+  return `<div style="max-width:900px">
+  <div style="font-size:15px;font-weight:600;margin-bottom:5px">${escHtml(cta?cta.name:"Cuenta corriente con la dueña")} · ${S.year}</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Dinero adelantado a cuentas o tarjetas personales de la dueña, pendiente de justificar con comprobantes</div>
+
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card kpi"><div class="kpi-label">Salió del negocio</div><div class="kpi-val" style="color:var(--red)">${fmt(d.salidas)}</div><div class="kpi-sub">${d.nSalidas} movimientos</div></div>
+    <div class="card kpi"><div class="kpi-label">Volvió al negocio</div><div class="kpi-val" style="color:#10b981">${fmt(d.entradas)}</div><div class="kpi-sub">${d.nEntradas} movimientos</div></div>
+    <div class="card kpi"><div class="kpi-label">Saldo pendiente</div><div class="kpi-val" style="color:var(--gold)">${fmt(d.saldo)}</div><div class="kpi-sub">por justificar o reclasificar</div></div>
+    <div class="card kpi"><div class="kpi-label">% de las ventas</div><div class="kpi-val">${ingresoTotal()>0?(d.saldo/ingresoTotal()*100).toFixed(1):0}%</div><div class="kpi-sub">de ${fmt(ingresoTotal())} facturados</div></div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="section-title">Cómo se cierra esto</div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.9">
+      <strong>1.</strong> Reúne los estados de las tarjetas de la dueña del año y marca qué compras fueron para el negocio — stock, equipos, fletes.<br>
+      <strong>2.</strong> Esas compras se registran en ContaFlow como gasto o inventario del negocio. Bajan la utilidad y son deducibles, porque el gasto es real aunque lo haya pagado ella.<br>
+      <strong>3.</strong> Lo que quede sin comprobante es un <strong>retiro de la dueña</strong>: va a la cuenta de patrimonio, no al Estado de Resultados. No baja la utilidad y no es deducible.<br>
+      <strong>4.</strong> Mientras el saldo siga aquí, la utilidad del año no está cerrada: puede bajar hasta ${fmt(d.saldo)} según cuánto se justifique.
+    </div>
+  </div>
+
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div class="card" style="flex:1;min-width:300px"><div class="section-title">Mes a mes</div>
+      <div style="overflow-x:auto"><table style="font-size:12px"><thead><tr><th>Mes</th><th style="text-align:right">Movs</th><th style="text-align:right">Salió</th><th style="text-align:right">Volvió</th><th style="text-align:right">Neto</th></tr></thead><tbody>${filas}</tbody></table></div>
+    </div>
+    <div class="card" style="flex:1;min-width:300px"><div class="section-title">Últimos movimientos</div>
+      <div style="overflow-x:auto;max-height:340px;overflow-y:auto"><table style="font-size:11.5px"><thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right">Monto</th></tr></thead><tbody>${detalle}</tbody></table></div>
+      ${mov.length>40?`<div style="font-size:10.5px;color:var(--muted);margin-top:7px">Mostrando los 40 más recientes de ${mov.length}.</div>`:""}
+    </div>
+  </div>
   </div>`;
 }
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
@@ -3842,7 +3949,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-17.1"; //@build
+const BUILD="2026-09-17.3"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
@@ -4048,7 +4155,7 @@ function renderIvu(){
 
 function renderContent(){
   const el=document.getElementById("content");
-  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,naturaleza:renderNaturalezaGasto,txns:renderTxns,cuadre:renderCuadre,reconcile:()=>modoFacturacion()==="factura"?renderConciliaCobros():renderReconcile(),transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
+  const map={dashboard:renderDashboard,pl:renderPL,balance:renderBalance,projects:renderProjects,budget:renderBudget,cashflow:renderCashflow,taxes:renderTaxes,invoices:renderInvoices,customers:renderCustomers,products:renderProducts,cobros:renderCobros,naturaleza:renderNaturalezaGasto,txns:renderTxns,duena:renderCuentaDuena,cuadre:renderCuadre,reconcile:()=>modoFacturacion()==="factura"?renderConciliaCobros():renderReconcile(),transfers:renderTransfers,accounts:renderAccounts,coa:renderCoa,ai:renderAI,settings:renderSettings};
   const banner=(S.tab==="settings")?"":taxAlertBanner();
   el.innerHTML=banner+(map[S.tab]||renderDashboard)();
 }
