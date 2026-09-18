@@ -930,7 +930,7 @@ function emptyState(icon,title,sub){return`<div class="empty"><div class="empty-
 
 function buildNav(){
   const nav=document.getElementById("nav");let html="",last="";
-  TABS.filter(t=>!t.fact||modoFacturacion()==="factura").forEach(t=>{if(t.s!==last){html+=`<div class="nav-section">${SEC_LABELS[t.s]||t.s}</div>`;last=t.s;}html+=`<button class="nav-btn ${S.tab===t.id?'active':''}" onclick="goTab('${t.id}')"><span class="icon">${t.icon}</span>${t.label}</button>`;});
+  TABS.filter(t=>!t.fact||modoFacturacion()==="factura"||(S.invoices||[]).length).forEach(t=>{if(t.s!==last){html+=`<div class="nav-section">${SEC_LABELS[t.s]||t.s}</div>`;last=t.s;}html+=`<button class="nav-btn ${S.tab===t.id?'active':''}" onclick="goTab('${t.id}')"><span class="icon">${t.icon}</span>${t.label}</button>`;});
   nav.innerHTML=html;
 }
 function buildYearSelect(){const sel=document.getElementById("year-select");sel.innerHTML=S.years.map(y=>`<option value="${y}" ${y===S.year?"selected":""}>${y}</option>`).join("");}
@@ -1093,9 +1093,16 @@ function renderProjects(){
   }
   const txs=S.txns.filter(t=>t.kind!=="transfer"),tR=ingresoTotal(),tE=gastoTotal();
   const ingCta=ingresoPorCuenta();
-  const revProy=p=>p.codes.reduce((s,c)=>s+(ingCta[c]||0),0);
-  const cards=activeProjects().map(p=>{const rev=revProy(p);const pct=tR>0?(rev/tR*100).toFixed(1):0;const net=rev-(tR>0?tE*(rev/tR):0);const cnt=modoFacturacion()==="factura"?facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))&&(f.lineas||[]).some(l=>p.codes.includes(l.coaCode))).length:txs.filter(t=>p.codes.includes(t.coaCode)).length;return`<div class="card" style="border-left:4px solid ${p.color};flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:20px">${p.icon}</span><div><div style="font-size:13px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${cnt} ${modoFacturacion()==="factura"?"facturas":"transacciones"}</div></div></div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:${p.color};margin-bottom:4px">${fmt(rev)}</div><div class="bar-wrap"><div class="bar-fill" style="background:${p.color};width:${pct}%"></div></div><div style="font-size:10px;color:var(--muted);margin-top:3px">${pct}% ingresos</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Utilidad est.: <strong style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</strong></div></div>`;}).join("");
-  const tRows=Array.from({length:12},(_,m)=>{const im=ingresoPorCuenta(m);const cols=activeProjects().map(p=>{const v=p.codes.reduce((s,c)=>s+(im[c]||0),0);return`<td style="text-align:right;color:${v>0?p.color:'var(--muted)'}">${v>0?fmt(v):"—"}</td>`;}).join("");return`<tr><td style="color:var(--muted)">${MONTHS[m]}</td>${cols}</tr>`;}).join("");
+  const porFactura=modoFacturacion()==="factura"&&facturasDelAnio().some(f=>f.proyectoId);
+  const revProy=p=>porFactura
+    ? facturasDelAnio().filter(f=>f.proyectoId===p.id&&!["borrador","anulada"].includes(estadoFactura(f)))
+        .reduce((s,f)=>s+(f.lineas||[]).reduce((a,l)=>a+(Number(l.cant)||0)*(Number(l.precio)||0),0),0)
+    : p.codes.reduce((s,c)=>s+(ingCta[c]||0),0);
+  const cards=activeProjects().map(p=>{const rev=revProy(p);const pct=tR>0?(rev/tR*100).toFixed(1):0;const net=rev-(tR>0?tE*(rev/tR):0);const cnt=modoFacturacion()==="factura"?facturasDelAnio().filter(f=>!["borrador","anulada"].includes(estadoFactura(f))&&(porFactura?f.proyectoId===p.id:(f.lineas||[]).some(l=>p.codes.includes(l.coaCode)))).length:txs.filter(t=>p.codes.includes(t.coaCode)).length;return`<div class="card" style="border-left:4px solid ${p.color};flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:20px">${p.icon}</span><div><div style="font-size:13px;font-weight:600">${p.name}</div><div style="font-size:10px;color:var(--muted)">${cnt} ${modoFacturacion()==="factura"?"facturas":"transacciones"}</div></div></div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:${p.color};margin-bottom:4px">${fmt(rev)}</div><div class="bar-wrap"><div class="bar-fill" style="background:${p.color};width:${pct}%"></div></div><div style="font-size:10px;color:var(--muted);margin-top:3px">${pct}% ingresos</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Utilidad est.: <strong style="color:${net>=0?'#10b981':'#ef4444'}">${fmt(net)}</strong></div></div>`;}).join("");
+  const tRows=Array.from({length:12},(_,m)=>{const im=ingresoPorCuenta(m);const cols=activeProjects().map(p=>{const v=porFactura
+  ? facturasDelAnio().filter(f=>f.proyectoId===p.id&&!["borrador","anulada"].includes(estadoFactura(f))&&(+String(f.fecha).slice(5,7)-1)===m)
+      .reduce((s,f)=>s+(f.lineas||[]).reduce((a,l)=>a+(Number(l.cant)||0)*(Number(l.precio)||0),0),0)
+  : p.codes.reduce((s,c)=>s+(im[c]||0),0);return`<td style="text-align:right;color:${v>0?p.color:'var(--muted)'}">${v>0?fmt(v):"—"}</td>`;}).join("");return`<tr><td style="color:var(--muted)">${MONTHS[m]}</td>${cols}</tr>`;}).join("");
   return`<div style="font-size:15px;font-weight:600;margin-bottom:14px">Reportes por Proyecto</div><div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px">${cards}</div><div class="card"><div class="section-title">Ingresos Mensuales por Proyecto</div><div style="overflow-x:auto"><table style="font-size:11px;min-width:500px"><thead><tr><th>Mes</th>${activeProjects().map(p=>`<th style="text-align:right;color:${p.color}">${p.icon} ${p.name}</th>`).join("")}</tr></thead><tbody>${tRows}</tbody></table></div></div>`;
 }
 
@@ -1628,6 +1635,10 @@ function showModal(type){
   <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer"><input type="checkbox" id="recat-todas" onchange="showRecat()"> También las que ya tienen una cuenta asignada <span style="opacity:.6">(pisa tus correcciones)</span></label>
   <div id="recat-preview"></div>
   <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button></div></div>`;
+  if(type==="import-mercury")html=`<div class="modal" style="max-width:780px"><div class="modal-title">Importar facturas de Mercury</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">Se traen por la API de Mercury con tu sesión, sin exportar nada a mano. Mercury sigue siendo donde emites; ContaFlow solo las registra y las concilia contra el banco.</p>
+  <button class="btn btn-primary btn-sm" onclick="traerFacturasMercury()">🔌 Conectar y traer facturas</button>
+  <div id="m-preview"></div>
+  <div class="modal-footer"><button class="btn btn-ghost" onclick="MINV=null;closeModal()">Cerrar</button></div></div>`;
   if(type==="import-pagos")html=`<div class="modal" style="max-width:760px"><div class="modal-title">Importar pagos recibidos de Zoho Books</div><p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">En Zoho: <strong>Ventas › Pagos recibidos › Exportar</strong> en CSV. Trae la vía de cobro, la comisión retenida y <strong>dónde cayó el dinero</strong> — que es lo que responde qué pasó con el efectivo.</p>
   <input type="file" id="p-file" accept=".csv,text/csv" style="margin-bottom:10px;font-size:12px" onchange="(function(inp){const f=inp.files&&inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{document.getElementById('p-text').value=e.target.result;analizarPagos()};r.readAsText(f)})(this)">
   <textarea id="p-text" rows="4" style="width:100%;resize:vertical;font-family:monospace;font-size:10px" placeholder="Payment Number,CustomerPayment ID,Mode,..." oninput="PIMP=null"></textarea>
@@ -2080,7 +2091,7 @@ function renderInvoices(){
   return `<div style="max-width:1000px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap">
     <div><div style="font-size:15px;font-weight:600">Facturas · ${S.year}</div><div style="font-size:11px;color:var(--muted)">El IVU se calcula por línea y se congela al emitir</div></div>
-    <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" onclick="showModal('import-zoho');setTimeout(()=>{const t=document.getElementById('z-text');if(t)t.focus()},40)">⬆️ Zoho Books</button><button class="btn btn-ghost btn-sm" onclick="exportInvoicesCsv()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="nuevaFactura()">+ Nueva factura</button></div>
+    <div style="display:flex;gap:8px">${(activeCompany().bankSync||(S.companyId===LEGACY_CO?"mercury":"none"))==="mercury"?`<button class="btn btn-ghost btn-sm" onclick="showModal('import-mercury')">⬇️ Facturas de Mercury</button>`:""}<button class="btn btn-ghost btn-sm" onclick="showModal('import-zoho');setTimeout(()=>{const t=document.getElementById('z-text');if(t)t.focus()},40)">⬆️ Zoho Books</button><button class="btn btn-ghost btn-sm" onclick="exportInvoicesCsv()">⬇️ CSV</button><button class="btn btn-primary btn-sm" onclick="nuevaFactura()">+ Nueva factura</button></div>
   </div>
   <div class="grid" style="margin-bottom:16px">
     <div class="card kpi"><div class="kpi-label">Facturado</div><div class="kpi-val" style="color:#10b981">${fmt(facturado)}</div><div class="kpi-sub">${vivas.length} facturas emitidas</div></div>
@@ -2159,6 +2170,7 @@ function editorFactura(){
       <div style="flex:1"><label>Fecha *</label><input type="date" id="fe-fecha" style="width:100%" value="${FEDIT.fecha}" onchange="FEDIT.fecha=this.value"></div>
       <div style="flex:1"><label>Vence</label><input type="date" id="fe-vence" style="width:100%" value="${FEDIT.vence||""}" onchange="FEDIT.vence=this.value"></div>
     </div>
+    ${(S.projects||[]).length?`<div class="input-row" style="margin-top:8px"><div style="flex:1"><label>Proyecto</label><select style="width:100%" onchange="FEDIT.proyectoId=this.value"><option value="">— sin asignar —</option>${S.projects.map(p=>`<option value="${p.id}" ${FEDIT.proyectoId===p.id?"selected":""}>${escHtml(p.name)}</option>`).join("")}</select></div></div>`:""}
     <div style="font-size:10.5px;color:var(--muted);margin-top:6px">${tipoCli.label} — ${tipoCli.nota}. La fecha decide en qué planilla mensual cae el IVU.</div>
     ${(!FEDIT.id&&hayFacturasImportadas())?`<div style="margin-top:8px;font-size:11px;color:#f59e0b;background:rgba(245,158,11,.1);padding:7px 10px;border-radius:6px">⚠️ Esta empresa tiene facturas importadas de otro sistema. Esta saldrá con la serie propia <strong>${escHtml(proximoNumero())}</strong>, separada de la de allá. Si el sistema de récord es el otro, emite allá y no aquí.</div>`:""}
     ${alerta?`<div style="margin-top:8px;font-size:11px;color:var(--red);background:rgba(239,68,68,.1);padding:7px 10px;border-radius:6px">⚠️ Este cliente es revendedor pero no tiene certificado registrado. La venta exenta no se sostiene sin él.</div>`:""}
@@ -3568,6 +3580,216 @@ function renderCuentaDuena(){
   </div>
   </div>`;
 }
+// ══ IMPORTAR FACTURAS DESDE MERCURY (API) ══
+// El esquema de la respuesta de Mercury no está documentado públicamente, así que
+// no se asume ninguno: se lee lo que devuelve tu cuenta, se detectan los campos y
+// se te enseña el mapeo antes de importar nada.
+let MINV=null;
+function buscaCampo(o,nombres,prof){
+  if(!o||typeof o!=="object")return undefined;
+  const p=prof===undefined?3:prof;
+  for(const n of nombres){
+    for(const k of Object.keys(o)){
+      if(csvNorm(k)===csvNorm(n)&&o[k]!==null&&o[k]!==undefined&&typeof o[k]!=="object")return o[k];
+    }
+  }
+  if(p<=0)return undefined;
+  for(const k of Object.keys(o)){
+    const v=o[k];
+    if(v&&typeof v==="object"&&!Array.isArray(v)){
+      const r=buscaCampo(v,nombres,p-1);
+      if(r!==undefined)return r;
+    }
+  }
+  return undefined;
+}
+function buscaLista(o){
+  const nombres=["lineitems","line items","items","lines","invoiceitems","details"];
+  for(const k of Object.keys(o||{})){
+    if(nombres.includes(csvNorm(k))&&Array.isArray(o[k]))return o[k];
+  }
+  for(const k of Object.keys(o||{})){
+    const v=o[k];
+    if(v&&typeof v==="object"&&!Array.isArray(v)){const r=buscaLista(v);if(r)return r}
+  }
+  return null;
+}
+const MF={
+  numero:["invoicenumber","invoice number","number","invoice no","reference","name"],
+  fecha:["issuedat","issued at","invoicedate","invoice date","issueddate","date","createdat"],
+  vence:["duedate","due date","dueat","paymentdue"],
+  cliente:["customername","customer name","recipientname","name","company","businessname","to"],
+  email:["customeremail","email","recipientemail"],
+  total:["totalamount","total","amount","amountdue","grandtotal"],
+  pagado:["paidamount","amountpaid","paid"],
+  estado:["status","state","paymentstatus"],
+  moneda:["currency","currencycode"],
+};
+const MERC_ESTADO={paid:"pagada",open:"emitida",sent:"emitida",draft:"borrador",overdue:"emitida",
+  void:"anulada",cancelled:"anulada",canceled:"anulada",partiallypaid:"parcial","partially paid":"parcial"};
+// Empareja la factura con un proyecto usando el nombre del cliente.
+const PROY_STOP=new Set(["llc","inc","corp","corporation","company","co","ltd","the","de","del","la","el","los","las","and","y","group","grupo","services","servicios","solutions","sa","srl","plc"]);
+function tokensNom(s){return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+  .replace(/[^a-z0-9\s]/g," ").split(/\s+/).filter(w=>w.length>2&&!PROY_STOP.has(w))}
+function proyectoPorCliente(nombre){
+  const tc=tokensNom(nombre); if(!tc.length)return "";
+  let best="",score=0;
+  (S.projects||[]).forEach(p=>{
+    if(p.hidden)return;
+    const tp=tokensNom(p.name); if(!tp.length)return;
+    const n=tp.filter(w=>tc.includes(w)).length;
+    if(n>score){score=n;best=p.id}
+  });
+  return score?best:"";
+}
+function normalizaFacturaMercury(raw){
+  const g=(k)=>buscaCampo(raw,MF[k]);
+  const numero=String(g("numero")||raw.id||"").trim();
+  const fechaRaw=String(g("fecha")||"");
+  const total=parseAmount(g("total"));
+  const pagado=parseAmount(g("pagado"));
+  const estZ=csvNorm(String(g("estado")||""));
+  const lista=buscaLista(raw)||[];
+  const lineas=lista.map(l=>{
+    const desc=buscaCampo(l,["description","name","item","title","memo"])||"Concepto";
+    const cant=parseAmount(buscaCampo(l,["quantity","qty","units"]))||1;
+    const precio=parseAmount(buscaCampo(l,["unitprice","unit price","price","rate","amount"]));
+    const tot=parseAmount(buscaCampo(l,["total","amount","lineamount","subtotal"]));
+    const base=(tot&&cant)?tot/cant:precio;
+    return {desc:String(desc),cant,precio:Math.round(base*10000)/10000};
+  }).filter(l=>Math.abs(l.precio)>0.0001||l.desc);
+  return {numero,fecha:fechaRaw.slice(0,10),vence:String(g("vence")||"").slice(0,10),
+    cliente:String(g("cliente")||"").replace(/\s+/g," ").trim(),email:String(g("email")||"").trim(),
+    total,pagado,estado:MERC_ESTADO[estZ]||"emitida",estadoMercury:String(g("estado")||""),
+    lineas:lineas.length?lineas:[{desc:"Servicios",cant:1,precio:total}],crudo:raw};
+}
+async function traerFacturasMercury(){
+  const box=document.getElementById("m-preview");
+  if(box)box.innerHTML=`<div style="font-size:12px;color:var(--muted);padding:12px">Consultando Mercury…</div>`;
+  let data;
+  try{ data=await mercuryCall("/ar/invoices?limit=1000"); }
+  catch(e){
+    if(box)box.innerHTML=`<div class="card card-sm" style="margin-top:12px;border-color:rgba(239,68,68,.35)">
+      <div style="font-size:12px;color:var(--red);font-weight:600;margin-bottom:5px">No pude leer las facturas</div>
+      <div style="font-size:11.5px;color:var(--muted);line-height:1.7">${escHtml(e.message)}<br><br>
+      Si dice que la ruta no está permitida, tu Worker de Mercury solo deja pasar <code>/accounts</code>, <code>/credit</code> y las transacciones. Hay que añadir <code>/ar/invoices</code> a su lista de rutas permitidas y volver a desplegarlo.</div></div>`;
+    return;
+  }
+  const arr=Array.isArray(data)?data:(data.invoices||data.data||data.items||data.results||[]);
+  if(!arr.length){
+    if(box)box.innerHTML=`<div style="font-size:12px;color:#f59e0b;padding:12px">Mercury respondió, pero sin facturas. Claves que devolvió: <code>${escHtml(Object.keys(data||{}).join(", ")||"—")}</code></div>`;
+    return;
+  }
+  MINV={arr:arr.map(normalizaFacturaMercury),crudo:arr[0]};
+  renderMercuryPreview();
+}
+function renderMercuryPreview(){
+  const box=document.getElementById("m-preview");if(!box||!MINV)return;
+  const ing=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
+  const def=(document.getElementById("m-cta")||{}).value||"";
+  const proy=(document.getElementById("m-proy")||{}).value||"";
+  const yaExiste=new Set((S.invoices||[]).map(f=>String(f.numero)));
+  const delAnio=MINV.arr.filter(f=>String(f.fecha).startsWith(String(S.year)));
+  const nuevas=delAnio.filter(f=>!yaExiste.has(f.numero));
+  const dup=delAnio.length-nuevas.length;
+  const sinFecha=MINV.arr.filter(f=>!/^\d{4}-\d{2}-\d{2}$/.test(f.fecha)).length;
+  const sinNumero=MINV.arr.filter(f=>!f.numero).length;
+  const est={};nuevas.forEach(f=>{est[f.estado]=(est[f.estado]||0)+1});
+  const suma=nuevas.filter(f=>!["borrador","anulada"].includes(f.estado))
+    .reduce((s,f)=>s+f.lineas.reduce((a,l)=>a+l.cant*l.precio,0),0);
+  const sumaMercury=nuevas.filter(f=>!["borrador","anulada"].includes(f.estado)).reduce((s,f)=>s+f.total,0);
+  const muestra=nuevas.slice(0,6).map(f=>`<tr>
+    <td style="font-family:ui-monospace,monospace;font-size:11px">${escHtml(f.numero||"—")}</td>
+    <td style="color:var(--muted);font-size:11px">${escHtml(f.fecha||"—")}</td>
+    <td style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.cliente||"—")}</td>
+    <td style="text-align:right">${f.lineas.length}</td>
+    <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(f.total)}</td>
+    <td><span class="tag" style="font-size:9px;background:${EST_COLOR[f.estado]}22;color:${EST_COLOR[f.estado]}">${f.estado}</span></td></tr>`).join("");
+  const claves=Object.keys(MINV.crudo||{}).slice(0,24).join(", ");
+  const proys=(S.projects||[]);
+  box.innerHTML=`
+  <div class="card card-sm" style="margin-top:12px">
+    <div class="section-title">1 · Qué devolvió Mercury</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:8px">Campos de la respuesta: <code style="font-size:10px">${escHtml(claves)}</code></div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px">
+      <div>📄 <strong>${MINV.arr.length}</strong> facturas en total</div>
+      <div>📅 <strong>${nuevas.length}</strong> nuevas de ${S.year}</div>
+      ${dup?`<div style="color:var(--muted)">↻ ${dup} ya estaban</div>`:""}
+      ${sinFecha?`<div style="color:#f59e0b">⚠️ ${sinFecha} sin fecha reconocible</div>`:""}
+      ${sinNumero?`<div style="color:#f59e0b">⚠️ ${sinNumero} sin número</div>`:""}
+    </div>
+    <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="verCrudoMercury()">Ver una factura tal cual llega</button></div>
+  </div>
+  <div class="card card-sm" style="margin-top:10px">
+    <div class="section-title">2 · Dónde se registran</div>
+    <div class="input-row" style="flex-wrap:wrap;gap:8px">
+      <div style="flex:1;min-width:190px"><label>Cuenta de ingreso *</label><select id="m-cta" style="width:100%" onchange="renderMercuryPreview()"><option value="">— elegir —</option>${ing.map(c=>`<option value="${c.code}" ${def===c.code?"selected":""}>${c.code} · ${escHtml(c.name)}</option>`).join("")}</select></div>
+      ${proys.length?`<div style="flex:1;min-width:190px"><label>Proyecto</label><select id="m-proy" style="width:100%" onchange="renderMercuryPreview()"><option value="">— detectar por el nombre del cliente —</option>${proys.map(p=>`<option value="${p.id}" ${proy===p.id?"selected":""}>Forzar todas a: ${escHtml(p.name)}</option>`).join("")}</select></div>`:""}
+    </div>
+    ${proys.length?`<div style="font-size:11px;margin-top:8px">${(()=>{const c={};nuevas.forEach(f=>{const id=proy||proyectoPorCliente(f.cliente);c[id||""]=(c[id||""]||0)+1});
+      return Object.entries(c).map(([id,n])=>{const p=proys.find(x=>x.id===id);
+        return `<span class="tag" style="margin-right:6px;font-size:9.5px;${p?`background:${p.color}22;color:${p.color}`:"color:#f59e0b"}">${p?`${p.icon||"📁"} ${escHtml(p.name)}`:"sin proyecto"}: ${n}</span>`}).join("")})()}</div>`:""}
+    <div style="font-size:10.5px;color:var(--muted);margin-top:7px">Sin IVU: esta empresa no está en perfil de Puerto Rico, así que las líneas entran exentas. Si una factura llevara impuesto, revísala después.</div>
+  </div>
+  <div class="card card-sm" style="margin-top:10px">
+    <div class="section-title">3 · Revisa antes de importar</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;margin-bottom:9px">
+      ${Object.entries(est).map(([k,v])=>`<div><span class="tag" style="font-size:9px;background:${EST_COLOR[k]}22;color:${EST_COLOR[k]}">${k}</span> ${v}</div>`).join("")}
+    </div>
+    <table style="font-size:12px;width:100%;max-width:430px">
+      <tr><td style="color:var(--muted);padding:2px 0">Suma de las líneas</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(suma)}</td></tr>
+      <tr><td style="color:var(--muted);padding:2px 0">Total según Mercury</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(sumaMercury)}</td></tr>
+      <tr><td style="font-weight:600;padding:5px 0;border-top:1px solid var(--border);color:${Math.abs(suma-sumaMercury)>0.02?"var(--red)":"#10b981"}">Diferencia</td><td style="text-align:right;font-weight:600;border-top:1px solid var(--border);color:${Math.abs(suma-sumaMercury)>0.02?"var(--red)":"#10b981"}">${fmt(suma-sumaMercury)}</td></tr>
+    </table>
+    ${Math.abs(suma-sumaMercury)>0.02?`<div style="margin-top:8px;font-size:11px;color:var(--red)">⚠️ Las líneas no suman el total de Mercury. Puede haber impuestos, descuentos o envíos fuera de las líneas. Revisa una factura cruda antes de importar.</div>`:""}
+    ${nuevas.length?`<div style="overflow-x:auto;margin-top:10px"><table style="font-size:11.5px"><thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th><th style="text-align:right">Líneas</th><th style="text-align:right">Total</th><th>Estado</th></tr></thead><tbody>${muestra}</tbody></table></div>`:""}
+  </div>
+  <div style="margin-top:11px"><button class="btn btn-primary" onclick="importarMercuryFacturas()" ${nuevas.length&&def?"":"disabled"}>✅ Importar ${nuevas.length} facturas</button>${def?"":`<span style="font-size:11px;color:#f59e0b;margin-left:9px">Elige la cuenta de ingreso</span>`}</div>`;
+}
+function verCrudoMercury(){
+  if(!MINV)return;
+  openModal(`<div class="modal" style="max-width:720px"><div class="modal-title">Una factura tal cual llega de Mercury</div>
+    <p style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Si algún campo no se está leyendo bien, aquí se ve el nombre real que usa Mercury.</p>
+    <pre style="background:var(--row);padding:12px;border-radius:8px;font-size:10.5px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word">${escHtml(JSON.stringify(MINV.crudo,null,2))}</pre>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="closeModal()">Cerrar</button></div></div>`);
+}
+async function importarMercuryFacturas(){
+  if(!MINV)return toast("⚠️ Primero trae las facturas de Mercury");
+  const def=(document.getElementById("m-cta")||{}).value||"";
+  if(!def)return toast("⚠️ Elige la cuenta de ingreso");
+  const proy=(document.getElementById("m-proy")||{}).value||"";
+  const yaExiste=new Set((S.invoices||[]).map(f=>String(f.numero)));
+  const nuevas=MINV.arr.filter(f=>String(f.fecha).startsWith(String(S.year))&&!yaExiste.has(f.numero));
+  if(!nuevas.length)return toast(`⚠️ Nada nuevo que importar para ${S.year}`);
+  const idPorNom=new Map((S.customers||[]).map(c=>[normNombre(c.name),c.id]));
+  const idPorMail=new Map((S.customers||[]).map(c=>[(c.email||"").toLowerCase().trim(),c.id]).filter(x=>x[0]));
+  let nCli=0,nFac=0;
+  nuevas.forEach((f,k)=>{
+    let cid=idPorNom.get(normNombre(f.cliente))||(f.email?idPorMail.get(f.email.toLowerCase().trim()):"");
+    if(!cid&&f.cliente){
+      const c={id:`cli_${Date.now()}_${nCli}`,name:f.cliente,email:f.email||"",tel:"",tipo:"consumidor",
+        certificado:"",municipio:"",nota:"Importado de Mercury"};
+      S.customers=[...(S.customers||[]),c];
+      idPorNom.set(normNombre(f.cliente),c.id);
+      if(f.email)idPorMail.set(f.email.toLowerCase().trim(),c.id);
+      cid=c.id;nCli++;
+    }
+    const lineas=f.lineas.map(l=>({desc:l.desc,cant:l.cant,precio:l.precio,ivu:"exento",coaCode:def}));
+    const base={id:`inv_merc_${Date.now()}_${k}`,numero:f.numero,clienteId:cid||"",fecha:f.fecha,
+      vence:f.vence||"",estado:f.estado,lineas,proyectoId:proy||proyectoPorCliente(f.cliente),nota:"Importada de Mercury",
+      origen:"mercury",tasas:ivuRates()};
+    const t=calcFactura(base);
+    const cobrado=f.estado==="pagada"?t.total:(f.pagado>0.005?Math.min(f.pagado,t.total):0);
+    S.invoices=[...(S.invoices||[]),{...base,...t,cobrado,
+      cobros:cobrado>0.005?[{fecha:f.fecha,monto:cobrado,metodo:"transferencia",comision:0,neto:cobrado,
+        nota:"Cobro según Mercury — ajusta el método si hace falta"}]:[],
+      difMercury:Math.round((t.total-(Number(f.total)||0))*100)/100}];
+    nFac++;
+  });
+  await saveCustomers();await saveInvoices();
+  MINV=null;closeModal();updateSidebar();renderContent();
+  toast(`✅ ${nFac} facturas y ${nCli} clientes importados de Mercury`);
+}
 // ═══ Alertas fiscales, export CPA e informe mensual ═══
 function taxQuarters(){
   return QUARTERS.map(q=>{
@@ -3995,7 +4217,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-18.1"; //@build
+const BUILD="2026-09-18.3"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
