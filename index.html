@@ -1134,35 +1134,91 @@ function renderBudget(){
   const yr=S.year,bgt=S.budget[yr]||{};
   const expA=S.coa.filter(c=>c.type==="expense"&&c.group!=="header");
   const revA=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
-  const sum=code=>S.txns.filter(t=>t.coaCode===code).reduce((s,t)=>s+Math.abs(t.amount),0);
+  // "Real" tiene que ser el MISMO numero que el Estado de Resultados:
+  // sin transferencias, y por factura cuando la empresa va en devengado.
+  const _ing=ingresoPorCuenta(),_gas=gastoPorCuenta();
+  const sum=code=>(_ing[code]||0)+(_gas[code]||0);
   const tBE=expA.reduce((s,a)=>s+(bgt[a.code]||0),0),tAE=expA.reduce((s,a)=>s+sum(a.code),0);
   const tBR=revA.reduce((s,a)=>s+(bgt[a.code]||0),0),tAR=revA.reduce((s,a)=>s+sum(a.code),0);
   const mkRows=(accts,isExp)=>accts.map(a=>{const act=sum(a.code),bv=bgt[a.code]||0,diff=isExp?(bv-act):(act-bv);const pct=bv>0?(act/bv*100).toFixed(0):0;return`<tr><td>${escHtml(a.name)}</td><td style="text-align:right"><input type="number" value="${bv||""}" placeholder="0" step="100" style="width:100px;text-align:right" onchange="updateBudget('${a.code}',this.value,'${yr}')"></td><td style="text-align:right">${act>0?fmt(act):"—"}</td><td style="text-align:right">${bv>0?pct+"%":"—"}</td><td style="text-align:right">${bv>0?`<span style="color:${diff>=0?'#10b981':'#ef4444'}">${fmt(Math.abs(diff))} ${diff>=0?'✓':'▲'}</span>`:"—"}</td></tr>`;}).join("");
   return`<div style="max-width:800px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-size:15px;font-weight:600">Presupuesto vs Real · ${yr}</div><div style="display:flex;gap:8px"><button class="btn btn-purple btn-sm" onclick="aiGenerateBudget()">🤖 Sugerir IA</button><button class="btn btn-ghost btn-sm" onclick="exportBudget()">⬇️ Exportar</button></div></div>
+  <div id="budget-ai-result"></div>
   <div class="grid" style="margin-bottom:16px"><div class="card kpi"><div class="kpi-label">Ingresos Presup.</div><div class="kpi-val" style="color:#3b82f6">${fmt(tBR)}</div><div class="kpi-sub">Real: ${fmt(tAR)}</div></div><div class="card kpi"><div class="kpi-label">Gastos Presup.</div><div class="kpi-val" style="color:#8b5cf6">${fmt(tBE)}</div><div class="kpi-sub">Real: ${fmt(tAE)}</div></div><div class="card kpi"><div class="kpi-label">Utilidad Presup.</div><div class="kpi-val" style="color:${(tBR-tBE)>=0?'#10b981':'#ef4444'}">${fmt(tBR-tBE)}</div><div class="kpi-sub">Real: ${fmt(tAR-tAE)}</div></div></div>
   <div class="card card-sm" style="margin-bottom:14px"><div class="section-title" style="color:#10b981">INGRESOS</div><table style="font-size:11px"><thead><tr><th>Cuenta</th><th style="text-align:right">Presup.</th><th style="text-align:right">Real</th><th style="text-align:right">%</th><th style="text-align:right">Dif.</th></tr></thead><tbody>${mkRows(revA,false)}</tbody></table></div>
   <div class="card card-sm"><div class="section-title" style="color:#ef4444">GASTOS</div><table style="font-size:11px"><thead><tr><th>Cuenta</th><th style="text-align:right">Presup.</th><th style="text-align:right">Real</th><th style="text-align:right">%</th><th style="text-align:right">Dif.</th></tr></thead><tbody>${mkRows(expA,true)}</tbody></table></div>
-  <div id="budget-ai-result" style="margin-top:14px"></div></div>`;
+  </div>`;
 }
 async function updateBudget(code,val,yr){if(!S.budget[yr])S.budget[yr]={};S.budget[yr][code]=parseFloat(val)||0;await saveBudget();}
 async function aiGenerateBudget(){
   const el=document.getElementById("budget-ai-result");if(!el)return;
-  el.innerHTML=`<div class="card" style="border-color:rgba(139,92,246,.3)"><div class="ai-typing"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div></div>`;
+  const destino=S.year+1;
   const expA=S.coa.filter(c=>c.type==="expense"&&c.group!=="header");
   const revA=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
-  const sum=code=>S.txns.filter(t=>t.coaCode===code).reduce((s,t)=>s+Math.abs(t.amount),0);
+  if(!revA.length&&!expA.length){
+    el.innerHTML=`<div class="card card-sm" style="border-color:rgba(245,158,11,.4)"><span style="font-size:12px;color:#f59e0b">⚠️ Esta empresa no tiene cuentas de ingreso ni de gasto en el plan de cuentas.</span></div>`;return;
+  }
+  const _i=ingresoPorCuenta(),_g=gastoPorCuenta();
+  const real=code=>Math.round(((_i[code]||0)+(_g[code]||0))*100)/100;
+  if(!revA.some(a=>real(a.code)>0)&&!expA.some(a=>real(a.code)>0)){
+    el.innerHTML=`<div class="card card-sm" style="border-color:rgba(245,158,11,.4)"><span style="font-size:12px;color:#f59e0b">⚠️ No hay movimientos en ${S.year}. Sin un año de base no hay nada sobre lo que proyectar.</span></div>`;return;
+  }
+  el.innerHTML=`<div class="card card-sm" style="border-color:rgba(139,92,246,.3)"><div class="ai-typing"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:6px">Proyectando ${destino} desde ${S.year}…</div></div>`;
+  // El esqueleto se arma con LAS CUENTAS DE ESTA EMPRESA, no con una lista fija.
+  const codigos=[...revA,...expA].map(a=>a.code);
+  const esqueleto=JSON.stringify(Object.fromEntries(codigos.map(c=>[c,0])));
+  const co=activeCompany();
+  const ctx=`${co.name} · ${co.state||""} · ${co.entity||""}${perfilPR()?" · Puerto Rico, IVU 11.5%":""}`;
+  const prompt=`Eres el CFO de ${ctx}. Propon el presupuesto ${destino} partiendo del real ${S.year}.
+Real ${S.year} por cuenta:
+${JSON.stringify({ingresos:revA.map(a=>({code:a.code,name:a.name,real:real(a.code)})),gastos:expA.map(a=>({code:a.code,name:a.name,real:real(a.code)}))})}
+Reglas: usa EXACTAMENTE estos codigos de cuenta y ninguno mas. Montos anuales en numero, sin simbolos. Cuenta sin historial va en 0 salvo que tenga sentido abrirla.
+Responde SOLO este JSON, sin texto alrededor:
+{"presupuesto":${esqueleto},"rationale":"2-4 frases explicando los supuestos"}`;
   try{
-    const resp=await callClaude(`CFO FL LLC. Sugiere presupuesto ${S.year+1} basado en ${S.year} de ${S.settings.companyName}.\nDatos:${JSON.stringify({revenues:revA.map(a=>({code:a.code,name:a.name,actual:sum(a.code)})),expenses:expA.map(a=>({code:a.code,name:a.name,actual:sum(a.code)}))})}\nSOLO JSON sin texto extra:\n{"revenues":{"4010":0,"4020":0,"4030":0,"4040":0,"4090":0,"4100":0},"expenses":{"5100":0,"5200":0,"5300":0,"5400":0,"5500":0,"5600":0,"5700":0,"5800":0,"5900":0},"rationale":"texto"}`);
-    const bgtS=JSON.parse(resp.replace(/```json|```/g,"").trim());
-    if(!S.budget[S.year+1])S.budget[S.year+1]={};
-    Object.assign(S.budget[S.year+1],bgtS.revenues||{},bgtS.expenses||{});
+    const resp=await callClaude(prompt);
+    const bruto=String(resp).replace(/```json|```/g,"").trim();
+    const m=bruto.match(/\{[\s\S]*\}/);          // por si viene con texto delante
+    if(!m)throw new Error("La IA no devolvió un JSON reconocible");
+    const out=JSON.parse(m[0]);
+    // Compatibilidad: acepta {presupuesto} o el formato viejo {revenues,expenses}
+    const plano={...(out.presupuesto||{}),...(out.revenues||{}),...(out.expenses||{})};
+    const validos={},ignorados=[];
+    Object.entries(plano).forEach(([c,v])=>{
+      const n=Number(v);
+      if(!S.coa.some(x=>x.code===c)){ignorados.push(c);return}
+      if(Number.isFinite(n)&&n>0)validos[c]=Math.round(n*100)/100;
+    });
+    if(!Object.keys(validos).length)
+      throw new Error("La IA no devolvió ninguna cuenta válida de esta empresa"+(ignorados.length?` (propuso ${ignorados.slice(0,5).join(", ")}, que no existen aquí)`:""));
+    if(!S.budget[destino])S.budget[destino]={};
+    Object.assign(S.budget[destino],validos);
     await saveBudget();
-    el.innerHTML=`<div class="card" style="border-color:rgba(139,92,246,.3);background:rgba(139,92,246,.05)"><div style="font-size:12px;font-weight:600;color:var(--purple);margin-bottom:6px">🤖 Presupuesto ${S.year+1} aplicado</div><div style="font-size:12px;line-height:1.7">${escHtml(bgtS.rationale||"")}</div><button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="changeYear(${S.year+1})">Ver ${S.year+1} →</button></div>`;
-  }catch(e){el.innerHTML=`<div class="card" style="border-color:rgba(239,68,68,.3)"><span style="color:var(--red);font-size:12px">❌ ${escHtml(e.message)}</span></div>`}
+    if(!S.years.includes(destino)){S.years=[...S.years,destino].sort((a,b)=>a-b);await saveYears();}
+    const tot=Object.entries(validos).reduce((a,[c,v])=>{
+      const t=(S.coa.find(x=>x.code===c)||{}).type;
+      if(t==="revenue")a.ing+=v; else if(t==="expense")a.gas+=v; return a;},{ing:0,gas:0});
+    el.innerHTML=`<div class="card card-sm" style="border-color:rgba(139,92,246,.35);background:rgba(139,92,246,.05);margin-bottom:14px">
+      <div style="font-size:12.5px;font-weight:600;color:var(--purple);margin-bottom:6px">🤖 Presupuesto ${destino} guardado · ${Object.keys(validos).length} cuentas</div>
+      <div style="font-size:12px;line-height:1.7;color:var(--muted)">${escHtml(out.rationale||"")}</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;margin-top:9px">
+        <div>Ingresos <strong style="color:#10b981">${fmt(tot.ing)}</strong></div>
+        <div>Gastos <strong style="color:var(--red)">${fmt(tot.gas)}</strong></div>
+        <div>Utilidad <strong style="color:${tot.ing-tot.gas>=0?"#10b981":"var(--red)"}">${fmt(tot.ing-tot.gas)}</strong></div>
+      </div>
+      ${ignorados.length?`<div style="font-size:10.5px;color:#f59e0b;margin-top:7px">Se ignoraron cuentas que no están en tu plan: ${escHtml(ignorados.slice(0,8).join(", "))}</div>`:""}
+      <div style="font-size:10.5px;color:var(--muted);margin-top:8px">Estás viendo ${S.year}. El presupuesto se guardó en ${destino}.</div>
+      <button class="btn btn-primary btn-sm" style="margin-top:9px" onclick="changeYear(${destino})">Ver ${destino} →</button>
+    </div>`;
+  }catch(e){
+    el.innerHTML=`<div class="card card-sm" style="border-color:rgba(239,68,68,.35);margin-bottom:14px">
+      <div style="font-size:12px;color:var(--red);font-weight:600;margin-bottom:4px">❌ No se pudo generar el presupuesto</div>
+      <div style="font-size:11.5px;color:var(--muted)">${escHtml(e.message)}</div></div>`;
+  }
 }
 function exportBudget(){
   const yr=S.year,bgt=S.budget[yr]||{};
-  const sum=code=>S.txns.filter(t=>t.coaCode===code).reduce((s,t)=>s+Math.abs(t.amount),0);
+  const _i=ingresoPorCuenta(),_g=gastoPorCuenta();
+  const sum=code=>(_i[code]||0)+(_g[code]||0);
   let csv=`Presupuesto ${yr}\n${S.settings.companyName}\n\nCódigo,Cuenta,Presupuestado,Real,Diferencia\n`;
   S.coa.filter(c=>c.group!=="header").forEach(a=>csv+=`${a.code},"${a.name}",${bgt[a.code]||0},${sum(a.code).toFixed(2)},${((bgt[a.code]||0)-sum(a.code)).toFixed(2)}\n`);
   downloadFile(`Presupuesto_${yr}.csv`,csv,"text/csv");
@@ -4252,7 +4308,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-18.4"; //@build
+const BUILD="2026-09-18.5"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
