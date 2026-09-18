@@ -779,6 +779,11 @@ async function loadState(){
     const pj=await dbGet("projects");S.projects=(pj&&pj.length)?pj:(S.companyId===LEGACY_CO?PROJECTS.map(p=>({...p})):[]);
     if(!S.years.includes(S.year))S.year=S.years[S.years.length-1]||new Date().getFullYear();
     for(const yr of S.years){const t=await dbGet(`txns:${yr}`);S.allTxns[yr]=t||[];}
+    // Abrir en el último año CON DATOS. Un año vacío creado por una factura suelta
+    // no debe secuestrar el arranque y hacer parecer que se perdió todo.
+    const conDatos=S.years.filter(yr=>(S.allTxns[yr]||[]).length>0
+      ||(S.invoices||[]).some(f=>String(f.fecha||"").startsWith(String(yr))));
+    if(conDatos.length&&!conDatos.includes(S.year))S.year=conDatos[conDatos.length-1];
     await loadYearTxns(S.year);
   }catch(e){console.warn(e)}
 }
@@ -1415,7 +1420,7 @@ function computeAccountBalance(accountId,asOfDate){
 }
 
 function renderCoa(){
-  return`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div style="font-size:15px;font-weight:600">Plan de Cuentas</div><button class="btn btn-primary btn-sm" onclick="showModal('add-coa')">+ Nueva</button></div><div class="card card-sm"><table><thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Grupo</th><th>Naturaleza</th>${(S.settings.taxProfile||"")==="pr-ivu"?"<th>IVU</th>":""}<th></th></tr></thead><tbody>${S.coa.map(c=>`<tr style="${c.group==="header"?"background:var(--row)":""}"><td style="font-weight:${c.group==="header"?600:400}">${c.code}</td><td style="padding-left:${c.group==="header"?10:22}px">${escHtml(c.name)}</td><td>${c.group!=="header"?`<span class="tag" style="background:${TYPE_COLOR[c.type]||'#6b7280'}20;color:${TYPE_COLOR[c.type]||'#6b7280'};border:1px solid ${TYPE_COLOR[c.type]||'#6b7280'}40;font-size:10px">${c.type}</span>`:""}</td><td style="color:var(--muted);font-size:11px">${c.group}</td><td>${c.type==="expense"&&c.group!=="header"?`<select onchange="setCatGasto('${c.code}',this.value)" style="font-size:10px;padding:2px 4px">${Object.entries(CAT_GASTO).map(([k,v])=>`<option value="${k}" ${catDeCuenta(c.code)===k?"selected":""}>${v.label}</option>`).join("")}</select>`:""}</td>${(S.settings.taxProfile||"")==="pr-ivu"?`<td>${c.type==="revenue"&&c.group!=="header"?`<select onchange="setCoaIvu('${c.code}',this.value)" style="font-size:10px;padding:2px 4px">${["11.5","4","exento","revisar","sin_clasificar"].map(k=>`<option value="${k}" ${ivuDe(c.code)===k?"selected":""}>${IVU_ETIQUETA[k]}</option>`).join("")}</select>`:""}</td>`:""}<td>${c.group!=="header"?`<button onclick="removeCoa('${c.code}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`:""}</td></tr>`).join("")}</tbody></table></div>`;
+  return`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div style="font-size:15px;font-weight:600">Plan de Cuentas</div><button class="btn btn-primary btn-sm" onclick="showModal('add-coa')">+ Nueva</button></div><div class="card card-sm"><table><thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Grupo</th><th>Saldo inicial</th><th>Naturaleza</th>${(S.settings.taxProfile||"")==="pr-ivu"?"<th>IVU</th>":""}<th></th></tr></thead><tbody>${S.coa.map(c=>`<tr style="${c.group==="header"?"background:var(--row)":""}"><td style="font-weight:${c.group==="header"?600:400}">${c.code}</td><td style="padding-left:${c.group==="header"?10:22}px">${escHtml(c.name)}</td><td>${c.group!=="header"?`<span class="tag" style="background:${TYPE_COLOR[c.type]||'#6b7280'}20;color:${TYPE_COLOR[c.type]||'#6b7280'};border:1px solid ${TYPE_COLOR[c.type]||'#6b7280'}40;font-size:10px">${c.type}</span>`:""}</td><td style="color:var(--muted);font-size:11px">${c.group}</td><td>${["asset","liability"].includes(c.type)&&c.group!=="header"&&c.group!=="bank"?`<input type="number" step="0.01" value="${c.saldoInicial===undefined?"":c.saldoInicial}" placeholder="—" style="width:92px;font-size:10px;padding:2px 4px" onchange="setSaldoInicial('${c.code}',this.value)">`:""}</td><td>${c.type==="expense"&&c.group!=="header"?`<select onchange="setCatGasto('${c.code}',this.value)" style="font-size:10px;padding:2px 4px">${Object.entries(CAT_GASTO).map(([k,v])=>`<option value="${k}" ${catDeCuenta(c.code)===k?"selected":""}>${v.label}</option>`).join("")}</select>`:""}</td>${(S.settings.taxProfile||"")==="pr-ivu"?`<td>${c.type==="revenue"&&c.group!=="header"?`<select onchange="setCoaIvu('${c.code}',this.value)" style="font-size:10px;padding:2px 4px">${["11.5","4","exento","revisar","sin_clasificar"].map(k=>`<option value="${k}" ${ivuDe(c.code)===k?"selected":""}>${IVU_ETIQUETA[k]}</option>`).join("")}</select>`:""}</td>`:""}<td>${c.group!=="header"?`<button onclick="removeCoa('${c.code}')" style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button>`:""}</td></tr>`).join("")}</tbody></table></div>`;
 }
 async function setCoaIvu(code,val){
   S.coa=S.coa.map(c=>c.code===code?{...c,ivu:val}:c);
@@ -1828,6 +1833,10 @@ function modoFacturacion(){return activeCompany().billingMode||"caja"}
 async function saveCustomers(){await dbSet("customers",S.customers)}
 async function saveProducts(){await dbSet("products",S.products)}
 async function saveInvoices(){await dbSet("invoices",S.invoices)}
+function normNombre(s){
+  return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/[^a-z0-9ñ ]/g," ").replace(/\s+/g," ").trim();
+}
 function clienteDe(id){return (S.customers||[]).find(c=>c.id===id)}
 function nombreCliente(id){const c=clienteDe(id);return c?c.name:"(cliente borrado)"}
 
@@ -1836,9 +1845,15 @@ function calcLinea(l){
   const base=(Number(l.cant)||0)*(Number(l.precio)||0);
   const r=ivuRates();
   let est=0,mun=0,esp=0;
-  if(l.ivu==="11.5"){est=base*(r.estatal/100);mun=base*(r.municipal/100)}
-  else if(l.ivu==="4"){esp=base*(r.especial/100)}
-  return {base,est,mun,esp,total:base+est+mun+esp};
+  const cobrado=(l.ivuCobrado!==undefined&&l.ivuCobrado!==null)?Number(l.ivuCobrado):null;
+  if(l.ivu==="11.5"){
+    if(cobrado!==null){            // repartimos lo cobrado en la proporción de las tasas
+      const t=r.estatal+r.municipal;
+      est=cobrado*(r.estatal/t); mun=cobrado*(r.municipal/t);
+    }else{est=base*(r.estatal/100);mun=base*(r.municipal/100)}
+  }
+  else if(l.ivu==="4"){esp=(cobrado!==null)?cobrado:base*(r.especial/100)}
+  return {base,est,mun,esp,total:base+est+mun+esp,cobrado:cobrado!==null};
 }
 function calcFactura(f){
   let sub=0,est=0,mun=0,esp=0;
@@ -1849,10 +1864,15 @@ function calcFactura(f){
 }
 function proximoNumero(){
   const pre=activeCompany().invoicePrefix||"F";
-  const nums=(S.invoices||[]).filter(f=>f.estado!=="borrador").map(f=>parseInt(String(f.numero).replace(/\D/g,""),10)||0);
+  // Solo cuenta la serie propia: las facturas importadas de otro sistema
+  // llevan su numeración y continuarla provocaría números duplicados allá.
+  const nums=(S.invoices||[]).filter(f=>f.estado!=="borrador"&&f.origen!=="zoho"
+      &&String(f.numero||"").startsWith(pre+"-"))
+    .map(f=>parseInt(String(f.numero).slice(pre.length+1).replace(/\D/g,""),10)||0);
   const n=(nums.length?Math.max(...nums):0)+1;
   return `${pre}-${String(n).padStart(5,"0")}`;
 }
+function hayFacturasImportadas(){return (S.invoices||[]).some(f=>f.origen==="zoho")}
 function facturasDelAnio(){return (S.invoices||[]).filter(f=>String(f.fecha||"").startsWith(String(S.year)))}
 function balanceFactura(f){const t=calcFactura(f);return Math.round((t.total-(Number(f.cobrado)||0))*100)/100}
 function estadoFactura(f){
@@ -1958,18 +1978,18 @@ async function importCustomers(){
   let arr;
   try{arr=JSON.parse(txt.trim())}catch(e){return toast("❌ No pude leer el JSON")}
   if(!Array.isArray(arr))return toast("❌ Se espera un arreglo de clientes");
-  const porCorreo=new Map((S.customers||[]).map(c=>[(c.email||"").toLowerCase(),c]));
-  const porNombre=new Map((S.customers||[]).map(c=>[(c.name||"").toLowerCase(),c]));
+  const porCorreo=new Map((S.customers||[]).map(c=>[(c.email||"").toLowerCase().trim(),c]));
+  const porNombre=new Map((S.customers||[]).map(c=>[normNombre(c.name),c]));
   let n=0,dup=0;
   arr.forEach(x=>{
     const name=String(x.name||x.nombre||"").trim();
     if(!name)return;
     const email=String(x.email||"").trim();
-    if((email&&porCorreo.has(email.toLowerCase()))||porNombre.has(name.toLowerCase())){dup++;return}
+    if((email&&porCorreo.has(email.toLowerCase().trim()))||porNombre.has(normNombre(name))){dup++;return}
     const obj={id:`cli_${Date.now()}_${n}`,name,email,tel:String(x.tel||x.telefono||""),
       tipo:TIPOS_CLIENTE[x.tipo]?x.tipo:"consumidor",certificado:String(x.certificado||""),municipio:String(x.municipio||""),nota:String(x.nota||"")};
     S.customers=[...(S.customers||[]),obj];
-    porCorreo.set(email.toLowerCase(),obj);porNombre.set(name.toLowerCase(),obj);
+    porCorreo.set(email.toLowerCase().trim(),obj);porNombre.set(normNombre(name),obj);
     n++;
   });
   await saveCustomers();closeModal();renderContent();
@@ -2140,6 +2160,7 @@ function editorFactura(){
       <div style="flex:1"><label>Vence</label><input type="date" id="fe-vence" style="width:100%" value="${FEDIT.vence||""}" onchange="FEDIT.vence=this.value"></div>
     </div>
     <div style="font-size:10.5px;color:var(--muted);margin-top:6px">${tipoCli.label} — ${tipoCli.nota}. La fecha decide en qué planilla mensual cae el IVU.</div>
+    ${(!FEDIT.id&&hayFacturasImportadas())?`<div style="margin-top:8px;font-size:11px;color:#f59e0b;background:rgba(245,158,11,.1);padding:7px 10px;border-radius:6px">⚠️ Esta empresa tiene facturas importadas de otro sistema. Esta saldrá con la serie propia <strong>${escHtml(proximoNumero())}</strong>, separada de la de allá. Si el sistema de récord es el otro, emite allá y no aquí.</div>`:""}
     ${alerta?`<div style="margin-top:8px;font-size:11px;color:var(--red);background:rgba(239,68,68,.1);padding:7px 10px;border-radius:6px">⚠️ Este cliente es revendedor pero no tiene certificado registrado. La venta exenta no se sostiene sin él.</div>`:""}
     <div style="overflow-x:auto;margin-top:12px;border:1px solid var(--border);border-radius:8px">
       <table style="font-size:12px;min-width:640px"><thead><tr><th style="padding:7px">Concepto</th><th style="padding:7px">Cant.</th><th style="padding:7px">Precio</th><th style="padding:7px">IVU</th><th style="padding:7px">Cuenta</th><th style="padding:7px;text-align:right">Total</th><th></th></tr></thead>
@@ -2536,12 +2557,12 @@ function renderZohoPreview(){
     });
   });
   const cliNuevos=new Set();
-  const porNom=new Set((S.customers||[]).map(c=>(c.name||"").toLowerCase()));
-  const porMail=new Set((S.customers||[]).map(c=>(c.email||"").toLowerCase()).filter(Boolean));
+  const porNom=new Set((S.customers||[]).map(c=>normNombre(c.name)));
+  const porMail=new Set((S.customers||[]).map(c=>(c.email||"").toLowerCase().trim()).filter(Boolean));
   nuevas.forEach(f=>{
     if(!f.cliente)return;
-    if(porNom.has(f.cliente.toLowerCase()))return;
-    if(f.email&&porMail.has(f.email.toLowerCase()))return;
+    if(porNom.has(normNombre(f.cliente)))return;
+    if(f.email&&porMail.has(f.email.toLowerCase().trim()))return;
     cliNuevos.add(f.cliente);
   });
   const inclusivas=nuevas.filter(f=>f.inclusivo).length;
@@ -2597,18 +2618,18 @@ async function importarZoho(){
   const nuevas=ZIMP.arr.filter(f=>String(f.fecha).startsWith(String(S.year))&&!yaExiste.has(f.numero));
   if(!nuevas.length)return toast(`⚠️ Nada nuevo que importar para ${S.year}`);
   // clientes
-  const idPorNom=new Map((S.customers||[]).map(c=>[(c.name||"").toLowerCase(),c.id]));
-  const idPorMail=new Map((S.customers||[]).map(c=>[(c.email||"").toLowerCase(),c.id]).filter(x=>x[0]));
+  const idPorNom=new Map((S.customers||[]).map(c=>[normNombre(c.name),c.id]));
+  const idPorMail=new Map((S.customers||[]).map(c=>[(c.email||"").toLowerCase().trim(),c.id]).filter(x=>x[0]));
   let nCli=0;
   nuevas.forEach(f=>{
     if(!f.cliente)return;
-    if(idPorNom.has(f.cliente.toLowerCase()))return;
-    if(f.email&&idPorMail.has(f.email.toLowerCase()))return;
+    if(idPorNom.has(normNombre(f.cliente)))return;
+    if(f.email&&idPorMail.has(f.email.toLowerCase().trim()))return;
     const c={id:`cli_${Date.now()}_${nCli}`,name:f.cliente,email:f.email||"",tel:f.tel||"",
       tipo:"consumidor",certificado:"",municipio:f.ciudad||"",nota:"Importado de Zoho Books"};
     S.customers=[...(S.customers||[]),c];
-    idPorNom.set(f.cliente.toLowerCase(),c.id);
-    if(f.email)idPorMail.set(f.email.toLowerCase(),c.id);
+    idPorNom.set(normNombre(f.cliente),c.id);
+    if(f.email)idPorMail.set(f.email.toLowerCase().trim(),c.id);
     nCli++;
   });
   // facturas
@@ -2617,14 +2638,17 @@ async function importarZoho(){
   nuevas.forEach((f,k)=>{
     const estado=EST_ZOHO[f.estadoZoho]||"emitida";
     const lineas=f.lineas.map(l=>({desc:l.desc,cant:l.cant,precio:l.precio,ivu:l.ivu,
-      coaCode:l.ivu==="exento"?defE:defG}));
+      coaCode:l.ivu==="exento"?defE:defG,
+      // El IVU que Zoho cobró de verdad al cliente. Manda sobre cualquier recálculo:
+      // es el dinero que se recibió en custodia para Hacienda.
+      ivuCobrado:(l.taxZoho!==undefined&&l.taxZoho!==null)?Math.round(l.taxZoho*100)/100:undefined}));
     // Zoho cobra el envío y aplica ajustes FUERA de las líneas. Sin esto el total no cuadra.
     if(Math.abs(f.envio||0)>0.005)lineas.push({desc:"Envío cobrado al cliente",cant:1,precio:f.envio,
       ivu:Math.abs(f.envioIvu||0)>0.005?"11.5":"exento",coaCode:defEnv,tipo:"envio"});
     if(Math.abs(f.ajuste||0)>0.005)lineas.push({desc:f.ajuste<0?"Descuento / ajuste":"Ajuste de factura",cant:1,
       precio:f.ajuste,ivu:"exento",coaCode:defG,tipo:"ajuste"});
     const base={id:`inv_zoho_${Date.now()}_${k}`,numero:f.numero,
-      clienteId:idPorNom.get((f.cliente||"").toLowerCase())||"",
+      clienteId:idPorNom.get(normNombre(f.cliente))||"",
       fecha:f.fecha,vence:f.vence||"",estado,lineas,nota:"Importada de Zoho Books",
       tasas:{estatal:r.estatal,municipal:r.municipal,especial:r.especial},origen:"zoho"};
     const t=calcFactura(base);
@@ -3236,6 +3260,8 @@ function puntoEquilibrio(){
     meses, fijosMensuales:meses?fijos/meses:0,
     ventasNecesariasMes: (margenContrib>0&&meses)?(fijos/margenContrib)/meses:0,
     holgura: ing-(margenContrib>0?fijos/margenContrib:0),
+    fiable: fijos>0.005&&meses>=3,
+    motivo: fijos<=0.005?"no hay gastos fijos registrados":(meses<3?`solo ${meses} ${meses===1?"mes":"meses"} con actividad`:""),
   };
 }
 function mesesConActividad(){
@@ -3277,6 +3303,7 @@ function renderNaturalezaGasto(){
       <tr><td style="color:var(--muted);padding:8px 0;border-top:1px solid var(--border)">Vendiste</td><td style="text-align:right;border-top:1px solid var(--border);padding:8px 0;font-variant-numeric:tabular-nums">${fmt(pe.ingresos)}</td></tr>
       <tr><td style="font-weight:600;padding:3px 0;color:${ok?"#10b981":"var(--red)"}">${ok?"Margen de seguridad":"Te faltó vender"}</td><td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums;color:${ok?"#10b981":"var(--red)"}">${fmt(Math.abs(pe.holgura))}</td></tr>
     </table>
+    ${pe.fiable?"":`<div style="margin-top:10px;font-size:11.5px;color:#f59e0b;background:rgba(245,158,11,.1);padding:9px 12px;border-radius:7px;line-height:1.6">⚠️ Este punto de equilibrio <strong>no es fiable</strong>: ${escHtml(pe.motivo)}. Si faltan gastos fijos por registrar —renta, nómina, servicios— la cifra sale más baja de lo que es.</div>`}
     <div style="font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.7">${ok
       ?`Puedes vender <strong>${pe.ingresos>0?(pe.holgura/pe.ingresos*100).toFixed(0):0}% menos</strong> antes de entrar en pérdidas. Cada dólar por encima del punto de equilibrio deja ${(pe.margenContrib*100).toFixed(0)}¢ de utilidad.`
       :`Con este nivel de gasto fijo, las ventas de ${S.year} no alcanzan a cubrirlo.`}</div>
@@ -3309,9 +3336,21 @@ function efectivoEnCajaAuto(){
     .reduce((s,c)=>s+(Number(c.monto)||0),0)*100)/100;
 }
 function saldoCuentaAuto(code){
-  // Saldo de una cuenta de pasivo o activo según los movimientos del libro
+  // OJO: esto es el MOVIMIENTO del año, no el saldo. El saldo real necesita
+  // el saldo inicial, que se captura en el Plan de Cuentas.
   return Math.round(S.txns.filter(t=>t.kind!=="transfer"&&t.coaCode===code)
     .reduce((s,t)=>s+t.amount,0)*100)/100;
+}
+function saldoInicialDe(code){
+  const c=S.coa.find(x=>x.code===code);
+  const v=c&&c.saldoInicial;
+  return (v===undefined||v===null||v==="")?null:Number(v)||0;
+}
+async function setSaldoInicial(code,val){
+  const v=(val===""||val===null)?undefined:Number(val)||0;
+  S.coa=S.coa.map(c=>c.code===code?{...c,saldoInicial:v}:c);
+  await saveCoa();renderContent();
+  toast(v===undefined?`${code}: saldo inicial borrado`:`${code}: saldo inicial ${fmt(v)}`);
 }
 function partidasAutoBalance(){
   const out={activos:[],pasivos:[]};
@@ -3326,15 +3365,22 @@ function partidasAutoBalance(){
   if(Math.abs(iv.pendiente)>0.005)out.pasivos.push({id:"auto_ivu",name:"IVU por Remitir a Hacienda",amount:iv.pendiente,
     note:`Devengado ${fmt(iv.devengado)} − remitido ${fmt(iv.remitido)} · estatal ${fmt(iv.estatal)} + municipal ${fmt(iv.municipal)}`,auto:1});
   S.coa.filter(c=>c.type==="asset"&&c.group!=="header"&&c.group!=="bank"&&c.code!==CTA_POR_COBRAR).forEach(c=>{
-    const s=saldoCuentaAuto(c.code);
-    if(Math.abs(s)>0.005)out.activos.push({id:"auto_"+c.code,name:`${c.code} ${c.name}`,amount:-s,
-      note:c.code===CTA_DUENA?"Anticipos a la dueña pendientes de justificar con comprobantes":"Movimiento neto del libro en esta cuenta",auto:1});
+    const mov=-saldoCuentaAuto(c.code);
+    const ini=saldoInicialDe(c.code);
+    if(Math.abs(mov)<0.005&&!ini)return;
+    const base=c.code===CTA_DUENA?"Anticipos a la dueña pendientes de justificar":"Movimiento del libro en esta cuenta";
+    out.activos.push({id:"auto_"+c.code,name:`${c.code} ${c.name}`,amount:(ini||0)+mov,
+      note:ini!==null?`Saldo inicial ${fmt(ini)} + movimiento ${fmt(mov)} · ${base}`
+        :`⚠️ Solo el movimiento de ${S.year} (${fmt(mov)}) — falta el saldo inicial, ponlo en Plan de Cuentas`,auto:1});
   });
   // Cualquier cuenta de pasivo del plan de cuentas con movimiento en el libro
   S.coa.filter(c=>c.type==="liability"&&c.group!=="header"&&!["2100","2110","2120"].includes(c.code)).forEach(c=>{
-    const s=saldoCuentaAuto(c.code);
-    if(Math.abs(s)>0.005)out.pasivos.push({id:"auto_"+c.code,name:`${c.code} ${c.name}`,amount:-s,
-      note:"Movimiento neto del libro en esta cuenta",auto:1});
+    const mov=-saldoCuentaAuto(c.code);
+    const ini=saldoInicialDe(c.code);
+    if(Math.abs(mov)<0.005&&!ini)return;
+    out.pasivos.push({id:"auto_"+c.code,name:`${c.code} ${c.name}`,amount:(ini||0)+mov,
+      note:ini!==null?`Saldo inicial ${fmt(ini)} + movimiento ${fmt(mov)}`
+        :`⚠️ Solo el movimiento de ${S.year} (${fmt(mov)}) — NO es el saldo real. Falta el saldo inicial.`,auto:1});
   });
   return out;
 }
@@ -3949,7 +3995,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-17.3"; //@build
+const BUILD="2026-09-18.1"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
