@@ -2969,6 +2969,21 @@ function margenBruto(mes){const i=ingresoTotal(mes);return i>0?(utilidadBruta(me
 
 // ═══ COBROS: dónde está el dinero de cada factura ═══
 const METODOS_AL_BANCO=["stripe","paypal","ath","tarjeta","transferencia","cheque","cheque_bancario"];
+// Cuantos dias puede tardar cada via en aparecer en el banco. Stripe y PayPal
+// liquidan en lotes con varios dias de retraso; un cheque puede tardar en depositarse.
+const VENTANA_DIAS={stripe:21,paypal:21,tarjeta:21,cheque:30,cheque_bancario:30,ath:7,transferencia:7};
+function ventanaDe(metodo){return VENTANA_DIAS[metodo]||10}
+// Depositos que estan en Cuentas por Cobrar pero NO son cobros de cliente.
+// Prestamos, traspasos de la cuenta personal del dueno: no hay factura que casar.
+const NO_ES_COBRO=[
+  {re:/advance\s+servicin|island\s+finance|funding|loan|prestamo|pr[eé]stamo/i,que:"desembolso de préstamo",sug:"2350"},
+  {re:/telepago|transferencia\s+de\s+fondos|\bbsmart\b/i,que:"traspaso de cuenta propia o del dueño",sug:"1150"},
+];
+function clasificaNoCobro(t){
+  const s=`${t.description||""} ${t.counterparty||""}`;
+  for(const r of NO_ES_COBRO)if(r.re.test(s))return r;
+  return null;
+}
 function todosLosCobros(){
   const out=[];
   facturasDelAnio().forEach(f=>{
@@ -3517,7 +3532,7 @@ function conciliarCobros(){
       const calza=Math.abs(t.amount-c.neto)<0.02||Math.abs(t.amount-c.monto)<0.02;
       if(!calza)return;
       const d=daysDiff(t.date,c.fecha);
-      if(d<=10&&d<mejorD){mejor=t;mejorD=d}
+      if(d<=ventanaDe(c.metodo)&&d<mejorD){mejor=t;mejorD=d}
     });
     if(mejor){usados.add(mejor.id);casados.push({cobro:c,banco:mejor,dias:mejorD})}
     else sinBanco.push(c);
@@ -3528,7 +3543,7 @@ function conciliarCobros(){
   const lotes=[];
   const pend=new Set(sinBanco.map(c=>c.idc));
   depos.filter(t=>!usados.has(t.id)).forEach(t=>{
-    const cand=sinBanco.filter(c=>pend.has(c.idc)&&c.fecha<=t.date&&daysDiff(t.date,c.fecha)<=8)
+    const cand=sinBanco.filter(c=>pend.has(c.idc)&&c.fecha<=t.date&&daysDiff(t.date,c.fecha)<=ventanaDe(c.metodo))
       .sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)))
       .slice(0,12);                       // techo: 2^12 combinaciones como máximo
     if(cand.length<2)return;
@@ -3549,8 +3564,23 @@ function conciliarCobros(){
     lotes.push({banco:t,grupo});
   });
   const sinBanco2=sinBanco.filter(c=>pend.has(c.idc));
-  const sinCobro=depos.filter(t=>!usados.has(t.id));
-  return {cobros,depos,casados,lotes,sinBanco:sinBanco2,sinCobro};
+  const resto=depos.filter(t=>!usados.has(t.id));
+  // Lo que no es cobro de cliente se aparta: no ensucia el pendiente de conciliar.
+  const noCobro=[],sinCobro=[];
+  resto.forEach(t=>{const r=clasificaNoCobro(t);if(r)noCobro.push({tx:t,...r});else sinCobro.push(t)});
+  return {cobros,depos,casados,lotes,sinBanco:sinBanco2,sinCobro,noCobro};
+}
+async function reclasificarNoCobro(code){
+  const cta=S.coa.find(c=>c.code===code);
+  if(!cta)return toast(`⚠️ La cuenta ${code} no existe en el plan de cuentas`);
+  const r=conciliarCobros();
+  const ids=new Set(r.noCobro.filter(x=>x.sug===code).map(x=>x.tx.id));
+  if(!ids.size)return toast("⚠️ Nada que mover");
+  const monto=S.txns.filter(t=>ids.has(t.id)).reduce((s,t)=>s+t.amount,0);
+  if(!confirm(`Mover ${ids.size} depósitos por ${fmt(monto)} de Cuentas por Cobrar a ${code} · ${cta.name}?`))return;
+  S.txns=S.txns.map(t=>ids.has(t.id)?{...t,coaCode:code}:t);
+  await saveTxns();updateSidebar();renderContent();
+  toast(`✅ ${ids.size} movidos a ${code} · ${cta.name}`);
 }
 function renderConciliaCobros(){
   const r=conciliarCobros();
@@ -3568,7 +3598,7 @@ function renderConciliaCobros(){
     <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(t.amount)}</td></tr>`).join("");
   return `<div style="max-width:960px">
   <div style="font-size:15px;font-weight:600;margin-bottom:5px">Conciliación · cobros contra banco · ${S.year}</div>
-  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Cada cobro de factura debe tener su depósito. Se compara contra el <strong>neto</strong>, porque el banco recibe el monto ya sin la comisión. Tolerancia de 2¢ y 10 días.</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Cada cobro de factura debe tener su depósito. Se compara contra el <strong>neto</strong>, porque el banco recibe el monto ya sin la comisión. Tolerancia de 2¢, y una ventana por vía: 21 días para Stripe y PayPal, 30 para cheques, 7 para ATH y transferencias.</div>
 
   <div class="grid" style="margin-bottom:16px">
     <div class="card kpi"><div class="kpi-label">Emparejados</div><div class="kpi-val" style="color:#10b981">${r.casados.length+r.lotes.reduce((s,l)=>s+l.grupo.length,0)}</div><div class="kpi-sub">${r.casados.length} uno a uno · ${r.lotes.reduce((s,l)=>s+l.grupo.length,0)} en ${r.lotes.length} lotes</div></div>
@@ -3584,9 +3614,23 @@ function renderConciliaCobros(){
     ${r.lotes.map(l=>`<tr><td style="color:var(--muted);white-space:nowrap">${escHtml(l.banco.date)}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(l.banco.amount)}</td><td style="font-size:10.5px">${l.grupo.map(c=>escHtml(c.factura)+" "+fmt(c.neto)).join(" + ")}</td></tr>`).join("")}
     </tbody></table></div>
   </div>`:""}
+  ${r.noCobro.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(59,130,246,.35)">
+    <div style="font-size:12.5px;font-weight:600;color:#3b82f6;margin-bottom:5px">${r.noCobro.length} depósitos que no son cobros de cliente · ${fmt(r.noCobro.reduce((s,x)=>s+x.tx.amount,0))}</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:9px">Están en <strong>Cuentas por Cobrar</strong> pero no hay factura que casar: son desembolsos de préstamo y traspasos desde cuentas propias o del dueño. Mientras sigan ahí, tus cuentas por cobrar están infladas por este importe.</div>
+    ${(()=>{const g={};r.noCobro.forEach(x=>{const k=x.que+"|"+x.sug;(g[k]=g[k]||{que:x.que,sug:x.sug,n:0,m:0,ids:[]});g[k].n++;g[k].m+=x.tx.amount;g[k].ids.push(x.tx.id)});
+      return Object.values(g).map(x=>{const cta=S.coa.find(c=>c.code===x.sug);
+      return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid rgba(31,41,55,.5)">
+        <div style="flex:1;min-width:230px;font-size:12px">${x.n} × ${escHtml(x.que)} · <strong style="font-variant-numeric:tabular-nums">${fmt(x.m)}</strong></div>
+        ${cta?`<button class="btn btn-ghost btn-sm" onclick="reclasificarNoCobro('${x.sug}')">Mover a ${x.sug} · ${escHtml(cta.name)}</button>`
+             :`<span style="font-size:11px;color:#f59e0b">Crea la cuenta ${x.sug} en el Plan de Cuentas para poder moverlos</span>`}
+      </div>`}).join("")})()}
+    <div style="overflow-x:auto;max-height:200px;overflow-y:auto;margin-top:9px"><table style="font-size:11.5px"><thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right">Monto</th></tr></thead><tbody>
+    ${r.noCobro.sort((a,b)=>b.tx.amount-a.tx.amount).slice(0,30).map(x=>`<tr><td style="color:var(--muted);white-space:nowrap">${escHtml(x.tx.date)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(x.tx.description)}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(x.tx.amount)}</td></tr>`).join("")}
+    </tbody></table></div>
+  </div>`:""}
   ${r.sinCobro.length?`<div class="card" style="margin-bottom:14px;border-color:rgba(239,68,68,.35)">
     <div style="font-size:12.5px;font-weight:600;color:var(--red);margin-bottom:5px">Depósitos que no corresponden a ningún cobro · ${fmt(sum(r.sinCobro))}</div>
-    <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:9px">Entró dinero al banco contra Cuentas por Cobrar sin una factura detrás. Normalmente son <strong>transferencias entre tus cuentas sin marcar</strong>, préstamos recibidos, o cobros de facturas de otros años. Revísalos: mientras estén aquí, tus cuentas por cobrar están mal.</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:9px">Entró dinero al banco contra Cuentas por Cobrar sin una factura detrás. Los préstamos y traspasos ya se apartaron arriba; lo que queda aquí suelen ser cobros de facturas de otros años, ventas sin factura, o depósitos de ATH y ventanilla que agrupan varios cobros. Revísalos: mientras estén aquí, tus cuentas por cobrar están mal.</div>
     <div style="overflow-x:auto;max-height:260px;overflow-y:auto"><table style="font-size:12px"><thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right">Monto</th></tr></thead><tbody>${filaSC}</tbody></table></div>
     ${r.sinCobro.length>25?`<div style="font-size:10.5px;color:var(--muted);margin-top:7px">Mostrando los 25 mayores de ${r.sinCobro.length}.</div>`:""}
   </div>`:`<div class="card" style="margin-bottom:14px;border-color:rgba(16,185,129,.3)"><div style="font-size:12px;color:#10b981">✓ Todo depósito contra Cuentas por Cobrar tiene su cobro de factura.</div></div>`}
@@ -4323,7 +4367,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-18.6"; //@build
+const BUILD="2026-09-18.7"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
