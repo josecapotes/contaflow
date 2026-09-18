@@ -1151,25 +1151,38 @@ function renderBudget(){
 async function updateBudget(code,val,yr){if(!S.budget[yr])S.budget[yr]={};S.budget[yr][code]=parseFloat(val)||0;await saveBudget();}
 async function aiGenerateBudget(){
   const el=document.getElementById("budget-ai-result");if(!el)return;
-  const destino=S.year+1;
+  const destino=S.year;   // se presupuesta el ano que estas viendo, no te movemos de sitio
   const expA=S.coa.filter(c=>c.type==="expense"&&c.group!=="header");
   const revA=S.coa.filter(c=>c.type==="revenue"&&c.group!=="header");
   if(!revA.length&&!expA.length){
     el.innerHTML=`<div class="card card-sm" style="border-color:rgba(245,158,11,.4)"><span style="font-size:12px;color:#f59e0b">⚠️ Esta empresa no tiene cuentas de ingreso ni de gasto en el plan de cuentas.</span></div>`;return;
   }
-  const _i=ingresoPorCuenta(),_g=gastoPorCuenta();
-  const real=code=>Math.round(((_i[code]||0)+(_g[code]||0))*100)/100;
-  if(!revA.some(a=>real(a.code)>0)&&!expA.some(a=>real(a.code)>0)){
-    el.innerHTML=`<div class="card card-sm" style="border-color:rgba(245,158,11,.4)"><span style="font-size:12px;color:#f59e0b">⚠️ No hay movimientos en ${S.year}. Sin un año de base no hay nada sobre lo que proyectar.</span></div>`;return;
+  // Base de calculo: el ultimo ano con movimientos que no sea el que se presupuesta.
+  // Asi puedes abrir 2027 vacio y pedir la sugerencia usando 2026 como referencia.
+  let base=destino,_i=ingresoPorCuenta(),_g=gastoPorCuenta();
+  const hayDatos=(i,g)=>[...revA,...expA].some(a=>((i[a.code]||0)+(g[a.code]||0))>0);
+  if(!hayDatos(_i,_g)){
+    const previos=(S.years||[]).filter(y=>y<destino&&(S.allTxns[y]||[]).length).sort((a,b)=>b-a);
+    let hallado=null;
+    for(const y of previos){
+      const guarda=S.txns;S.txns=S.allTxns[y]||[];
+      const i2=ingresoPorCuenta(),g2=gastoPorCuenta();S.txns=guarda;
+      if(hayDatos(i2,g2)){hallado=y;_i=i2;_g=g2;break}
+    }
+    if(hallado===null){
+      el.innerHTML=`<div class="card card-sm" style="border-color:rgba(245,158,11,.4);margin-bottom:14px"><span style="font-size:12px;color:#f59e0b">⚠️ No hay ningún año con movimientos sobre el que proyectar ${destino}.</span></div>`;return;
+    }
+    base=hallado;
   }
-  el.innerHTML=`<div class="card card-sm" style="border-color:rgba(139,92,246,.3)"><div class="ai-typing"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:6px">Proyectando ${destino} desde ${S.year}…</div></div>`;
+  const real=code=>Math.round(((_i[code]||0)+(_g[code]||0))*100)/100;
+  el.innerHTML=`<div class="card card-sm" style="border-color:rgba(139,92,246,.3)"><div class="ai-typing"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:6px">Proyectando ${destino} desde ${base}…</div></div>`;
   // El esqueleto se arma con LAS CUENTAS DE ESTA EMPRESA, no con una lista fija.
   const codigos=[...revA,...expA].map(a=>a.code);
   const esqueleto=JSON.stringify(Object.fromEntries(codigos.map(c=>[c,0])));
   const co=activeCompany();
   const ctx=`${co.name} · ${co.state||""} · ${co.entity||""}${perfilPR()?" · Puerto Rico, IVU 11.5%":""}`;
-  const prompt=`Eres el CFO de ${ctx}. Propon el presupuesto ${destino} partiendo del real ${S.year}.
-Real ${S.year} por cuenta:
+  const prompt=`Eres el CFO de ${ctx}. Propon el presupuesto ${destino} partiendo del real ${base}.
+Real ${base} por cuenta:
 ${JSON.stringify({ingresos:revA.map(a=>({code:a.code,name:a.name,real:real(a.code)})),gastos:expA.map(a=>({code:a.code,name:a.name,real:real(a.code)}))})}
 Reglas: usa EXACTAMENTE estos codigos de cuenta y ninguno mas. Montos anuales en numero, sin simbolos. Cuenta sin historial va en 0 salvo que tenga sentido abrirla.
 Responde SOLO este JSON, sin texto alrededor:
@@ -1193,7 +1206,6 @@ Responde SOLO este JSON, sin texto alrededor:
     if(!S.budget[destino])S.budget[destino]={};
     Object.assign(S.budget[destino],validos);
     await saveBudget();
-    if(!S.years.includes(destino)){S.years=[...S.years,destino].sort((a,b)=>a-b);await saveYears();}
     const tot=Object.entries(validos).reduce((a,[c,v])=>{
       const t=(S.coa.find(x=>x.code===c)||{}).type;
       if(t==="revenue")a.ing+=v; else if(t==="expense")a.gas+=v; return a;},{ing:0,gas:0});
@@ -1206,9 +1218,12 @@ Responde SOLO este JSON, sin texto alrededor:
         <div>Utilidad <strong style="color:${tot.ing-tot.gas>=0?"#10b981":"var(--red)"}">${fmt(tot.ing-tot.gas)}</strong></div>
       </div>
       ${ignorados.length?`<div style="font-size:10.5px;color:#f59e0b;margin-top:7px">Se ignoraron cuentas que no están en tu plan: ${escHtml(ignorados.slice(0,8).join(", "))}</div>`:""}
-      <div style="font-size:10.5px;color:var(--muted);margin-top:8px">Estás viendo ${S.year}. El presupuesto se guardó en ${destino}.</div>
-      <button class="btn btn-primary btn-sm" style="margin-top:9px" onclick="changeYear(${destino})">Ver ${destino} →</button>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:8px">${base!==destino?`Proyectado a partir de ${base}, porque ${destino} todavía no tiene movimientos. `:""}Ya está aplicado en la tabla de abajo; puedes editar cualquier celda a mano.</div>
     </div>`;
+    // repintamos la tabla para que los numeros nuevos se vean sin recargar
+    const cont=document.getElementById("content");
+    if(cont){const aviso=el.innerHTML;cont.innerHTML=renderBudget();
+      const el2=document.getElementById("budget-ai-result");if(el2)el2.innerHTML=aviso;}
   }catch(e){
     el.innerHTML=`<div class="card card-sm" style="border-color:rgba(239,68,68,.35);margin-bottom:14px">
       <div style="font-size:12px;color:var(--red);font-weight:600;margin-bottom:4px">❌ No se pudo generar el presupuesto</div>
@@ -4308,7 +4323,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-18.5"; //@build
+const BUILD="2026-09-18.6"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
