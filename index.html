@@ -421,6 +421,7 @@ const TABS=[
   {id:"dashboard",icon:"📊",label:"Dashboard",s:"reportes"},
   {id:"pl",icon:"📈",label:"P&L",s:"reportes"},
   {id:"balance",icon:"⚖️",label:"Balance General",s:"reportes"},
+  {id:"naturaleza",icon:"🧮",label:"Naturaleza del gasto",s:"reportes",when:()=>S.txns.some(t=>t.amount<0)},
   {id:"projects",icon:"🏢",label:"Proyectos",s:"reportes"},
   {id:"budget",icon:"🎯",label:"Presupuesto",s:"plan"},
   {id:"cashflow",icon:"💧",label:"Flujo de Caja",s:"plan"},
@@ -430,11 +431,10 @@ const TABS=[
   {id:"products",icon:"📦",label:"Productos",s:"ventas",fact:1},
   {id:"cobros",icon:"💵",label:"Cobros",s:"ventas",fact:1},
   {id:"txns",icon:"💳",label:"Transacciones",s:"datos"},
-  {id:"naturaleza",icon:"🧮",label:"Naturaleza del gasto",s:"reportes"},
-  {id:"duena",icon:"👤",label:"Cuenta de la dueña",s:"datos"},
-  {id:"cuadre",icon:"⚖️",label:"Cuadre utilidad/caja",s:"datos"},
-  {id:"reconcile",icon:"🔗",label:"Conciliación",s:"datos"},
-  {id:"transfers",icon:"🔄",label:"Transferencias",s:"datos"},
+  {id:"duena",icon:"👤",label:"Cuenta del dueño",s:"datos",when:()=>hayCuentaDueno(),labelFn:()=>nombreCuentaDueno()},
+  {id:"cuadre",icon:"⚖️",label:"Cuadre utilidad/caja",s:"datos",when:()=>S.txns.length>0},
+  {id:"reconcile",icon:"🔗",label:"Conciliación",s:"datos",when:()=>S.txns.length>0&&(S.invoices||[]).length>0},
+  {id:"transfers",icon:"🔄",label:"Transferencias",s:"datos",when:()=>S.txns.some(t=>t.kind==="transfer")},
   {id:"accounts",icon:"🏦",label:"Cuentas",s:"datos"},
   {id:"coa",icon:"📋",label:"Plan Cuentas",s:"datos"},
   {id:"ai",icon:"🤖",label:"Asistente IA",s:"ia"},
@@ -445,9 +445,13 @@ const TYPE_COLOR={revenue:"#10b981",expense:"#ef4444",asset:"#3b82f6",liability:
 const QUARTERS=[{label:"Q1",months:[0,1,2]},{label:"Q2",months:[3,4,5]},{label:"Q3",months:[6,7,8]},{label:"Q4",months:[9,10,11]}];
 const SEC_LABELS={reportes:"📊 Reportes",plan:"📅 Planificación",ventas:"🧾 Ventas",datos:"📁 Datos",ia:"✨ IA",sistema:"⚙️ Sistema"};
 
+// Ajustes base. Cada empresa arranca desde aqui: nada de la anterior se hereda.
+const DEFAULT_SETTINGS={companyName:"Joint Strategy USA, LLC",state:"Florida",entity:"LLC Pass-Through",currency:"USD",anthropicApiKey:""};
+// La llave de la API es del usuario, no de la empresa: esa si viaja entre empresas.
+const SETTINGS_GLOBALES=["anthropicApiKey"];
 let S={
   tab:"dashboard",year:2025,
-  settings:{companyName:"Joint Strategy USA, LLC",state:"Florida",entity:"LLC Pass-Through",currency:"USD",anthropicApiKey:""},
+  settings:{...DEFAULT_SETTINGS},
   coa:DEFAULT_COA,
   bankAccounts:[
     {id:"m3721",name:"Mercury Checking ••3721",bank:"Mercury",type:"checking",last4:"3721",color:"#10b981",note:"Cuenta principal",openingBalance:0,openingDate:"2025-01-01"},
@@ -765,7 +769,9 @@ async function runMigration(){
 
 async function loadState(){
   try{
-    const s=await dbGet("settings");if(s)S.settings={...S.settings,...s};
+    const glob={};SETTINGS_GLOBALES.forEach(k=>{if(S.settings[k])glob[k]=S.settings[k]});
+    const s=await dbGet("settings");
+    S.settings={...DEFAULT_SETTINGS,...glob,...(s||{})};
     const c=await dbGet("coa");if(c)S.coa=c;
     const b=await dbGet("bankAccts");if(b)S.bankAccounts=b;else if(S.companyId!==LEGACY_CO)S.bankAccounts=[];
     const y=await dbGet("years");if(y){S.years=y;S.year=y[y.length-1]||2025;}
@@ -928,14 +934,32 @@ function escHtml(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt
 function getTxMonth(t){return new Date(t.date+"T00:00:00").getMonth()}
 function emptyState(icon,title,sub){return`<div class="empty"><div class="empty-icon">${icon}</div><div class="empty-title">${title}</div><p style="font-size:12px;margin-top:8px;color:var(--muted)">${sub}</p></div>`}
 
+function tabLabel(t){try{return (typeof t.labelFn==="function"?t.labelFn():"")||t.label}catch{return t.label}}
+function tabsVisibles(){
+  return TABS.filter(t=>{
+    if(t.fact&&modoFacturacion()!=="factura"&&!(S.invoices||[]).length)return false;
+    if(typeof t.when==="function"){try{if(!t.when())return false}catch{return false}}
+    return true;
+  });
+}
 function buildNav(){
-  const nav=document.getElementById("nav");let html="",last="";
-  TABS.filter(t=>!t.fact||modoFacturacion()==="factura"||(S.invoices||[]).length).forEach(t=>{if(t.s!==last){html+=`<div class="nav-section">${SEC_LABELS[t.s]||t.s}</div>`;last=t.s;}html+=`<button class="nav-btn ${S.tab===t.id?'active':''}" onclick="goTab('${t.id}')"><span class="icon">${t.icon}</span>${t.label}</button>`;});
+  const nav=document.getElementById("nav");let html="";
+  const vis=tabsVisibles();
+  // Una cabecera por seccion y en el orden de SEC_LABELS: nunca dos "DATOS" seguidos.
+  Object.keys(SEC_LABELS).forEach(sec=>{
+    const items=vis.filter(t=>t.s===sec);
+    if(!items.length)return;
+    html+=`<div class="nav-section">${SEC_LABELS[sec]}</div>`;
+    items.forEach(t=>{html+=`<button class="nav-btn ${S.tab===t.id?'active':''}" onclick="goTab('${t.id}')"><span class="icon">${t.icon}</span>${escHtml(tabLabel(t))}</button>`});
+  });
   nav.innerHTML=html;
+  // Si la pestana activa ya no aplica a esta empresa, volvemos al dashboard.
+  if(!vis.some(t=>t.id===S.tab)&&S.tab!=="dashboard"){S.tab="dashboard";
+    const tb=document.getElementById("topbar-title");if(tb)tb.textContent="Dashboard";}
 }
 function buildYearSelect(){const sel=document.getElementById("year-select");sel.innerHTML=S.years.map(y=>`<option value="${y}" ${y===S.year?"selected":""}>${y}</option>`).join("");}
 async function changeYear(y){S.year=+y;await loadYearTxns(S.year);updateSidebar();renderContent();}
-function goTab(id){S.tab=id;S.filterSearch="";S.filterCode="";S.filterSign="";const t=TABS.find(x=>x.id===id);document.getElementById("topbar-title").textContent=t?.label||id;buildNav();renderContent();if(window.innerWidth<=640){document.getElementById("sidebar").classList.remove("open");const bd=document.getElementById("sidebar-backdrop");if(bd)bd.style.display="none";}}
+function goTab(id){S.tab=id;S.filterSearch="";S.filterCode="";S.filterSign="";const t=TABS.find(x=>x.id===id);document.getElementById("topbar-title").textContent=t?tabLabel(t):id;buildNav();renderContent();if(window.innerWidth<=640){document.getElementById("sidebar").classList.remove("open");const bd=document.getElementById("sidebar-backdrop");if(bd)bd.style.display="none";}}
 function toggleSidebar(){const sb=document.getElementById("sidebar");sb.classList.toggle("open");const bd=document.getElementById("sidebar-backdrop");if(bd)bd.style.display=sb.classList.contains("open")&&window.innerWidth<=640?"block":"none";}
 function updateSidebar(){
   buildYearSelect();buildNav();
@@ -980,7 +1004,7 @@ function renderDashboard(){
   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:2;min-width:260px"><div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span>Ingresos vs Gastos · ${S.year}</span><div style="display:flex;gap:10px;font-size:10px;color:var(--muted)"><span><span style="display:inline-block;width:8px;height:8px;background:#10b981;border-radius:2px;margin-right:3px"></span>Ing</span><span><span style="display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:2px;margin-right:3px"></span>Gas</span></div></div><div class="chart-wrap">${svg}</div></div><div class="card" style="flex:1;min-width:180px"><div class="section-title">Por Trimestre</div><table style="font-size:11px"><thead><tr><th>Q</th><th style="text-align:right">Ing</th><th style="text-align:right">Gas</th><th style="text-align:right">Neto</th></tr></thead><tbody>${qRows}</tbody></table></div></div>
   ${(()=>{const sg=salidasNoGasto();const tot=Object.values(sg).reduce((a,b)=>a+b,0);if(tot<0.01)return "";
   return `<div class="card" style="margin-bottom:18px"><div class="section-title">Salidas que no son gasto · ${fmt(tot)}</div>
-  <div style="font-size:10.5px;color:var(--muted);margin-bottom:9px;line-height:1.6">Dinero que salió del banco pero no es gasto del negocio: pago de préstamos, remisión de IVU a Hacienda, retiros del dueño. Va en el Balance, no en el Estado de Resultados.</div>
+  <div style="font-size:10.5px;color:var(--muted);margin-bottom:9px;line-height:1.6">Dinero que salió del banco pero no es gasto del negocio: pago de préstamos, ${perfilPR()?"remisión de IVU a Hacienda, ":""}retiros del dueño. Va en el Balance, no en el Estado de Resultados.</div>
   <table style="font-size:12px"><tbody>${Object.entries(sg).sort((a,b)=>b[1]-a[1]).map(([c,v])=>{const ct=S.coa.find(x=>x.code===c);return `<tr><td>${escHtml(ct?ct.code+" · "+ct.name:c+" (cuenta inexistente)")}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(v)}</td></tr>`}).join("")}</tbody></table></div>`})()}
 <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px"><div class="card" style="flex:1;min-width:200px"><div class="section-title">Top Gastos</div>${topExp.map(([code,val])=>{const c=S.coa.find(x=>x.code===code);const pct=exp>0?(val/exp*100).toFixed(0):0;return`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c?.name||code}</span><span style="font-size:11px;color:#ef4444;white-space:nowrap">${fmt(val,true)}</span></div><div class="bar-wrap"><div class="bar-fill" style="background:#ef4444;width:${pct}%"></div></div></div>`}).join("")}</div><div class="card" style="flex:1;min-width:200px"><div class="section-title">Top Ingresos</div>${topInc.map(([code,val])=>{const c=S.coa.find(x=>x.code===code);const pct=rev>0?(val/rev*100).toFixed(0):0;return`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c?.name||code}</span><span style="font-size:11px;color:#10b981;white-space:nowrap">${fmt(val,true)}</span></div><div class="bar-wrap"><div class="bar-fill" style="background:#10b981;width:${pct}%"></div></div></div>`}).join("")}</div></div>
   <div class="card"><div class="section-title">Últimas Transacciones</div><table><thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th style="text-align:right">Monto</th></tr></thead><tbody>${recent.map(t=>`<tr><td style="color:var(--muted);white-space:nowrap">${fmtDate(t.date)}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</td><td>${catTag(t.coaCode)}</td><td style="text-align:right;color:${t.amount>=0?'#10b981':'#ef4444'};font-weight:600">${fmt(t.amount)}</td></tr>`).join("")}</tbody></table><div style="margin-top:10px;text-align:right"><button class="btn btn-ghost btn-sm" onclick="goTab('txns')">Ver todas →</button></div></div>`;
@@ -3165,12 +3189,15 @@ function cuadreResultadoCaja(){
   const pasivoIn=entradasPasivo();
   const facturado=ingresoTotal();
   const cobrado=cobrosDelAnio();
-  const noCobrado=facturado-cobrado;   // ventas facturadas que aún no entraron (aprox)
+  // Solo en base de acumulación hay ingreso reconocido que todavía no entró al banco.
+  // En base de efectivo la utilidad YA es caja: restar lo no cobrado lo descuadraría.
+  const devengado=modoFacturacion()==="factura";
+  const noCobrado=devengado?facturado-cobrado:0;
   // Punto de partida: utilidad. Se le quita lo facturado y no cobrado,
   // se le quitan las salidas que no son gasto, se le suman las entradas que no son ingreso,
   // y se le quitan las transferencias netas a cuentas que no están en la app.
   const esperado=utilidad-noCobrado-pasivoOut+pasivoIn+transf;
-  return {utilidad,banco,transf,pasivoOut,pasivoIn,facturado,cobrado,noCobrado,
+  return {utilidad,banco,transf,pasivoOut,pasivoIn,facturado,cobrado,noCobrado,devengado,
           esperado,sinExplicar:Math.round((banco-esperado)*100)/100};
 }
 function destinoTransferencias(){
@@ -3198,8 +3225,8 @@ function renderCuadre(){
   <div class="card" style="margin-bottom:16px">
     <table style="font-size:13px;width:100%">
       ${fila("Utilidad neta según el Estado de Resultados",q.utilidad,"",1)}
-      ${fila("− Facturado que todavía no se ha cobrado",-q.noCobrado,`Facturado ${fmt(q.facturado)} · cobrado ${fmt(q.cobrado)}`)}
-      ${fila("− Salidas que no son gasto",-q.pasivoOut,"Pago del préstamo, remisión de IVU, retiros")}
+      ${q.devengado?fila("− Facturado que todavía no se ha cobrado",-q.noCobrado,`Facturado ${fmt(q.facturado)} · cobrado ${fmt(q.cobrado)}`):""}
+      ${fila("− Salidas que no son gasto",-q.pasivoOut,perfilPR()?"Pago del préstamo, remisión de IVU, retiros":"Pago del préstamo, retiros del dueño")}
       ${fila("+ Entradas que no son ingreso",q.pasivoIn,"Préstamos recibidos")}
       ${fila("+ Transferencias netas a otras cuentas",q.transf,"Dinero movido a cuentas que no están cargadas en la app")}
       <tr><td style="font-weight:600;padding:8px 0;border-top:1px solid var(--border)">= Movimiento de caja que debería verse</td><td style="text-align:right;font-weight:600;border-top:1px solid var(--border);padding:8px 0;font-variant-numeric:tabular-nums">${fmt(q.esperado)}</td></tr>
@@ -3508,6 +3535,14 @@ function renderConciliaCobros(){
 // aparezca el comprobante de qué se compró. Lo que se justifique pasa a gasto o
 // inventario; lo que no, es un retiro y va al patrimonio.
 const CTA_DUENA="1150";
+// La cuenta corriente con el dueno solo existe si esta en el plan de cuentas de ESTA empresa
+// y ademas tiene movimientos. Sin eso, la pestana no aplica.
+function hayCuentaDueno(){
+  if(!S.coa.some(c=>c.code===CTA_DUENA))return false;
+  return S.txns.some(t=>t.kind!=="transfer"&&t.coaCode===CTA_DUENA);
+}
+// Nombre que le da cada empresa a esa cuenta; si no lo cambio, uno neutro.
+function nombreCuentaDueno(){return (S.coa.find(c=>c.code===CTA_DUENA)||{}).name||"Cuenta corriente con el dueno"}
 function saldoCuentaDuena(){
   const mov=S.txns.filter(t=>t.kind!=="transfer"&&t.coaCode===CTA_DUENA);
   const sal=mov.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
@@ -3521,12 +3556,12 @@ function avisoCuentaDuena(){
   if(d.saldo<=500)return "";
   const nom=(S.coa.find(c=>c.code===CTA_DUENA)||{}).name||"la dueña";
   return `<div class="card" style="margin-bottom:14px;border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.06)">
-    <div style="font-size:12.5px;font-weight:600;color:#f59e0b;margin-bottom:6px">⚠️ ${fmt(d.saldo)} pendientes de justificar en la cuenta de la dueña</div>
+    <div style="font-size:12.5px;font-weight:600;color:#f59e0b;margin-bottom:6px">⚠️ ${fmt(d.saldo)} pendientes de justificar en ${escHtml(nombreCuentaDueno())}</div>
     <div style="font-size:11.5px;color:var(--muted);line-height:1.75">
       Salieron <strong>${fmt(d.salidas)}</strong> en ${d.nSalidas} movimientos hacia cuentas personales y volvieron <strong>${fmt(d.entradas)}</strong> en ${d.nEntradas}.
       Ese saldo no es gasto ni es retiro <em>todavía</em>: depende de qué se compró.
       <br><strong>Lo que tenga comprobante</strong> de compra para el negocio se reclasifica a inventario o gasto — y ahí sí baja la utilidad y es deducible.
-      <strong>Lo que no</strong>, es un retiro de la dueña y va al patrimonio, sin tocar el Estado de Resultados.
+      <strong>Lo que no</strong>, es un retiro del dueño y va al patrimonio, sin tocar el Estado de Resultados.
     </div>
     <div style="margin-top:9px"><button class="btn btn-ghost btn-sm" onclick="goTab('duena')">Ver el detalle →</button></div>
   </div>`;
@@ -3549,8 +3584,8 @@ function renderCuentaDuena(){
     <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.description)}</td>
     <td style="text-align:right;font-variant-numeric:tabular-nums;color:${t.amount<0?"var(--red)":"#10b981"}">${fmt(t.amount)}</td></tr>`).join("");
   return `<div style="max-width:900px">
-  <div style="font-size:15px;font-weight:600;margin-bottom:5px">${escHtml(cta?cta.name:"Cuenta corriente con la dueña")} · ${S.year}</div>
-  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Dinero adelantado a cuentas o tarjetas personales de la dueña, pendiente de justificar con comprobantes</div>
+  <div style="font-size:15px;font-weight:600;margin-bottom:5px">${escHtml(nombreCuentaDueno())} · ${S.year}</div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Dinero adelantado a cuentas o tarjetas personales del dueño, pendiente de justificar con comprobantes</div>
 
   <div class="grid" style="margin-bottom:16px">
     <div class="card kpi"><div class="kpi-label">Salió del negocio</div><div class="kpi-val" style="color:var(--red)">${fmt(d.salidas)}</div><div class="kpi-sub">${d.nSalidas} movimientos</div></div>
@@ -3562,9 +3597,9 @@ function renderCuentaDuena(){
   <div class="card" style="margin-bottom:16px">
     <div class="section-title">Cómo se cierra esto</div>
     <div style="font-size:11.5px;color:var(--muted);line-height:1.9">
-      <strong>1.</strong> Reúne los estados de las tarjetas de la dueña del año y marca qué compras fueron para el negocio — stock, equipos, fletes.<br>
+      <strong>1.</strong> Reúne los estados de las tarjetas personales del año y marca qué compras fueron para el negocio — compras, equipos, servicios.<br>
       <strong>2.</strong> Esas compras se registran en ContaFlow como gasto o inventario del negocio. Bajan la utilidad y son deducibles, porque el gasto es real aunque lo haya pagado ella.<br>
-      <strong>3.</strong> Lo que quede sin comprobante es un <strong>retiro de la dueña</strong>: va a la cuenta de patrimonio, no al Estado de Resultados. No baja la utilidad y no es deducible.<br>
+      <strong>3.</strong> Lo que quede sin comprobante es un <strong>retiro del dueño</strong>: va a la cuenta de patrimonio, no al Estado de Resultados. No baja la utilidad y no es deducible.<br>
       <strong>4.</strong> Mientras el saldo siga aquí, la utilidad del año no está cerrada: puede bajar hasta ${fmt(d.saldo)} según cuánto se justifique.
     </div>
   </div>
@@ -4217,7 +4252,7 @@ async function toggleHideEmpty(v){
 //  la del archivo servido. Si no coinciden, avisa.
 //  ⚠️ Al subir un cambio, incrementa BUILD. Si no, no avisa.
 // ═══════════════════════════════════════════════════════════
-const BUILD="2026-09-18.3"; //@build
+const BUILD="2026-09-18.4"; //@build
 
 function pintarVersion(){
   const el=document.querySelector(".logo-ver");
